@@ -1,0 +1,847 @@
+---
+title: "Analysis_all_mouse"
+author: "Enric Vercher"
+date: "2023-10-18"
+output: html_document
+---
+
+```{r}
+suppressPackageStartupMessages({library(parallel)
+library(Seurat)
+library(ggplot2)
+library(dplyr)
+library(tidyverse)
+library(patchwork)
+library(DoubletFinder)
+library(sctransform)
+library(glmGamPoi)
+library(SeuratDisk)
+library(viridis)
+library(SeuratData)
+
+library(scales)
+library(scRepertoire)
+library(knitr)
+
+#para las paletas de colores personalizadas
+library(scCustomize)
+library(qs)
+library(stats)
+library(presto)
+library(msigdbr)
+library(fgsea)})
+```
+
+# Anotacion de los cluster
+
+```{r}
+# Cargamos el archivo que ya esta junto el VDJ con el scRNA
+data_integrated_VDJ <- readRDS(file="C:/Users/d940401/Desktop/Analisis_immcantation/Analisis_Enric/Datos_Enric/Datos_TFM/00_Datos_filtrados_slurm/05_VDJ_scRNA_Seurat/Seurat_RCPA_sin_CD8_BCR.rds")
+```
+
+```{r}
+UMAPPlot(data_integrated_VDJ, label = T)
+```
+```{r}
+head(Idents(data_integrated_VDJ), 5)
+new.cluster.ids <-  c("C0-Naive/Naive activada", "C1-Plasmblasto","C2-memoria (no-IS)","C3-act +PreMem","C4-Memoria+plasmblasto","C5-Bmemoria-IS","C6-Bmemoria-IS","C7-Naive","C8-Plasmblasto-avanzado","C9-Plasmatica","C10-Breg(IS)")
+names(new.cluster.ids) <- levels(data_integrated_VDJ)
+data_integrated_VDJ <- RenameIdents(data_integrated_VDJ, new.cluster.ids)
+head(Idents(data_integrated_VDJ), 5)
+```
+```{r}
+DimPlot(data_integrated_VDJ, reduction = "umap",pt.size = 1.5)
+```
+
+```{r}
+new.cluster.ids <- c("C0", "C1","C2","C3","C4","C5","C6","C7","C8","C9","C10")
+legend.ids <- c("C0-Naive/Naive activada", "C1-Plasmblasto","C2-memoria (no-IS)","C3-act +PreMem","C4-Memoria+plasmblasto","C5-Bmemoria-IS","C6-Bmemoria-IS","C7-Naive","C8-Plasmblasto-avanzado","C9-Plasmatica","C10-Breg(IS)")
+names(new.cluster.ids) <- levels(data_integrated_VDJ)
+data_integrated_VDJ <- RenameIdents(data_integrated_VDJ, new.cluster.ids)
+DimPlot(data_integrated_VDJ, reduction = "umap", label = TRUE, pt.size = 1.5) 
+```
+```{r}
+DimPlot(data_integrated_VDJ, reduction = "umap", label = TRUE, pt.size = 1.5)
+```
+
+
+# Las naive/naive-activadas y premem
+
+```{r}
+# Set color palette
+pal <- viridis(n = 2, option = "C", direction = -1)
+B_activated <-c("Junb","Fcer2a","Sell")
+b_cell_markers <- c("Ebf1", "Pax5", "Foxo1","Bach2","Plac8","Ighm","Bcl6","Vim","Cd79a","Ighd","Cd69","Ccr7")
+#FeaturePlot(data_integrated_VDJ, features = b_cell_markers,cols = pal, order = T)
+VlnPlot(object = data_integrated_VDJ, features = b_cell_markers,pt.size=0, idents=c("0","5","9"))+ geom_boxplot(width=0.1, color="black", alpha=0.2)
+DotPlot(data_integrated_VDJ, features = c(b_cell_markers,B_activated), group.by = "seurat_clusters") + coord_flip() 
+```
+
+# Comparación con los datos de citometría
+
+esto con lo de Sandra del power point y con esta web:
+
+https://www.novusbio.com/research-areas/immunology/b-cell-development-and-differentiation-markers
+
+```{r}
+# B220 o CD45R es Ptprc
+# CD138 es Sdc1
+# CD20 es Ms4a1
+# Havcr2 es TIM3
+# Ms4a1 es CD20
+# Il12a es IL35
+# Pdcd1lg2 es CD273
+# Nt5e es CD73
+# il6ra es CD126
+# cxcr4 es CD184
+# slamf7 es CD319
+b_cell_cytometry <- c("Ptprc","Cd38","Sdc1","Xbp1","Jchain","Ebf1", "Pax5", "Foxo1","Bach2","Cd80", 
+                      "Cd86","Ighg2c","Ighg2b","Ighg3","Ighg1","Ighm","Ighd","Igha","Cd1d1","Havcr2","Il12a","Cd24a",
+                      "Ms4a1","H2-DMb2","H2-Eb2","H2-Ab1","H2-Ob","H2-Aa","Cd93","Apoe","Plac8","Vim",
+                      "Cd84","Pdcd1lg2","Nt5e","Il6ra","Cxcr4","Slamf7","Cd9","Traf1","Itga4","Zbtb20","Ccr6")
+DotPlot(data_integrated_VDJ, features = b_cell_cytometry, group.by = "seurat_clusters") + coord_flip() 
+```
+
+ https://www.nature.com/articles/s41581-018-0074-7/figures/1
+
+con el poster: https://www.bio-rad-antibodies.com/static/2016/mouse-human/mouse-immune-cell-lineage--antigen-expression-vh.pdf
+
+# Marcadores para el TFM
+
+```{r}
+b_cell_cytometry_figura <- c("Cd24a", "Il12a", "Igha", "Ighg2c", "Ighg2b", "Ighg1", "Bcl6","Sdc1","Jchain","Xbp1","Nt5e", "Pdcd1lg2", "Cd86", "Traf1", "Itga4", "Cd84", "Cd80", "Cd38", "Zbtb20", "Pax5", "Bach2", "Ebf1", "Foxo1", "Cd1d1", "Ptprc", "H2-Aa", "H2-Ob", "H2-Ab1", "H2-Eb2", "H2-DMb2", "Havcr2", "Cd93","Apoe", "Junb", "Fcer2a", "Sell", "Cd79b", "Cd79a", "Ighd", "Ighm")
+DotPlot(data_integrated_VDJ, features = b_cell_cytometry_figura, group.by = "seurat_clusters") + coord_flip() 
+```
+
+
+Naive: Cluster 0 hay polbacion naive (más naive)
+
+
+B activadas: cluster 3 --> Ebf1 y Pax5, Foxo1 y Bmemoria (prememoria por Foxo1 y Ebf1, Bach2). En este caso el cluster 2 parece ser más memoria que el 3. Se expresa menos el Foxo1 y el Ebf1, por lo que son más Bmem que el cluster 3. el 5 son más memoria porque estos marcadores desaparecen. Hay una población naive también. El cluster 7 son naive 
+
+del bhattacharya: A recent study found more heterogeneous expression of CD80 in memory B cells than we observed in this study, with the CD80 cells representing cells that had undergone minimal somatic hypermutation. 
+
+```{r}
+VlnPlot(object = data_integrated_VDJ, features =c("Cd1d1","Il12a","Ptprc","Cd80","Cd24a","","Havcr2","Pdcd1lg2","Ms4a1"),pt.size=0)
+
+```
+
+```{r}
+FeaturePlot_scCustom(data_integrated_VDJ, features = c("Cd79a", "Sdc1", "Ptprc", "Cd80","H2-Eb2","Havcr2"), pt.size = 0.1)
+```
+
+```{r}
+VlnPlot(data_integrated_VDJ, features = c("Pdcd1lg2", "Cd93", "Sdc1","Il12a"),pt.size=0)
+```
+
+Cluster 7
+
+```{r}
+VlnPlot(data_integrated_VDJ, features = c("Srm","Ncl"),pt.size=0)
+```
+
+# https://www.nature.com/articles/ni.2641
+
+El Junb está en las naive y las naive activadas.
+
+# paper de bhattacharya
+
+## migration/adhesion
+
+```{r}
+memory <- c("Ski","Mll3","PmlTcf4","Bmi1")
+DotPlot(data_integrated_VDJ, features = memory, group.by = "seurat_clusters") + coord_flip() 
+```
+
+
+## Esto del power point de Sandra
+ 
+Si queremos ver si son más o menos memoria.
+
+El cluster 9 parece el más plasmático al expresar el Sdc1 (CD138), Xbp1, Jchain, Slpi. Los mismo que en el paper: https://doi.org/10.1016/j.celrep.2021.109286
+
+
+```{r}
+#MemoryCells del paper 
+Bmem <- c("Apoe","Phf21a", "Zbtb20", "Kmt2c", "Ski", "Tcf4", "Cd80", "Il6ra", "Itgb7", "Ccr6", "Pecam1", "Nid1","Ackr3", "Itga4", "Bcl2", "Traf1", "Malt1", "Ccnd3", "Rb1")
+DotPlot(data_integrated_VDJ, features = Bmem, group.by = "seurat_clusters") + coord_flip()
+```
+
+```{r}
+DotPlot(data_integrated_VDJ, features = PC, group.by = "seurat_clusters") + coord_flip() 
+DotPlot(data_integrated_VDJ, features = Bmem, group.by = "seurat_clusters") + coord_flip() 
+```
+
+```{r}
+# No hay cd27
+# No hay cd73
+# No hay PDL1
+plasmablast <- c("Ptprc","Cd24a","Cd38","Sdc1","Cd80")
+DotPlot(data_integrated_VDJ, features = plasmablast, group.by = "seurat_clusters") + coord_flip() 
+```
+
+
+```{r}
+#GerminalCenter can be subdivided into Light zone (LZ) and Dark Zone (DZ)
+
+DZ.genes <- c("Pif1", "Otub2", "Psrc1", "Lrrc49", "Ccnb2", "Mnd1", "Lgr5", "Adhfe1", "Pafah1b3", "Hmmr", "Tifa", "Reln", "Sepp1", "Cdkn3", "Gcnt3", "Cdc20", "Ube2c", "Serinc5", "Cenpa", "Ccnb1", "Plk1", "Cenpf", "Tgfa", "Tpx2", "Depdc1b", "Gpd1l", "Polh", "Cep55", "Nek2", "Zkscan16", "Lmo4", "Gas2l3", "Ptgr1", "Aspm", "Rnf125", "Cxcr4", "Kif20a", "Kif2c", "Rabgap1l", "Bub1", "Nebl", "Lig4", "Neil1", "Pde2a", "Ehf", "Racgap1", "Cdca8", "Cdc14b", "Cdc25c", "Lipc", "Mprip", "Aurka", "Gpsm2", "Spdya", "Akap12", "Kif22", "Birc5", "Pfn2", "Ddx19a", "Ldlrad4", "Gcsam")
+
+DotPlot(data_integrated_VDJ, features = DZ.genes, group.by = "seurat_clusters") + coord_flip()
+```
+
+
+```{r}
+LZ.genes <- c("Egr1", "Egr2", "Ccnd2", "Cd69", "Cd86", "Cd40", "Slamf1", "Ifi30", "Myc","S1pr3", "Il4i1", "Ccr6", "", "Gpr183", "Nfkbia", "Plscr1", "Socs3", "Lifr", "Bcl2a1a", "Bcl2a1d", "Bcl2a1b", "Hhex", "Dock10", "Hivep3", "Samsn1", "Irf4", "Gimap4", "Ptger4",  "Fscn1", "Marcks", "Ier2", "Snn", "Bhlhe40", "Slpi", "Matr3", "Rapgef4", "Rilpl2", "Gadd45g", "Cfp", "Tyms", "Mdn1")
+
+# DZ and LZ can be further roughly subdivided depending on cell cycle score and function
+# Generally light zone cells are in G1 and S. DZ cellsare in S, G2/M and G1
+
+# LZ cells in S are entering dark zone
+# DZ cells in G1 are exiting DZ and entering LZ
+
+#LZcells receiving Tfh cells signals to enter/exit the GC
+LZ.help <- c("Itgb2", "Cxcr5", "Tgfbr2", "Il21r", "Ebf1", "Irf8", "Nfkb2", "Icosl", "Slamf1", "Tnfrsf13c")
+
+#Cell in the lightzone Reentering to DZ
+DZ.reentry <- c("Aicda", "Cxcr4", "Xrcc4", "Cd24a", "Mki67", "Foxo1", "Tcf3")
+
+#Pre-memory cells
+Premem <- c("Pbx3", "Ncoa1", "Etv6", "Efnb1", "S1pr3", "Bmpr1a", "Cd86", "Cd59a")
+```
+
+Los siguientes análisis no sirven de nada:
+
+# DEG GP enrichment
+
+https://bookdown.org/ytliu13207/SingleCellMultiOmicsDataAnalysis/deg-go-enrichment.html
+
+```{r}
+suppressPackageStartupMessages({library(Seurat)
+library(tidyverse)
+library(magrittr)
+library(ReactomePA)
+library(clusterProfiler)
+library(enrichplot)
+library(org.Mm.eg.db)
+library(DOSE)})
+```
+
+```{r}
+deg.ls <- split(rownames(data_integrated_VDJ), f = data_integrated_VDJ$seurat_clusters)
+```
+
+```{r}
+geneid.ls <- deg.ls %>% map(~{
+  
+  # here for macaque
+  gene.df <- select(org.Mm.eg.db,
+                    keys = .x,
+                    columns = c("ENTREZID", "SYMBOL"),
+                    keytype = "SYMBOL")
+  
+  gene <- gene.df$ENTREZID
+  gene <- gene[which(!is.na(gene))]
+  gene <- unique(gene)
+  
+  return(gene)
+})
+```
+
+
+## GO per cluster
+
+```{r}
+## go enrichment per cluster
+go.ls <- geneid.ls[c(1,2,8)] %>% map(~{
+  
+  
+  
+  eGO <- enrichGO(
+    gene          = .x,
+    OrgDb         = org.Mm.eg.db,
+    ont           = "BP",
+    pAdjustMethod = "BH",
+    pvalueCutoff  = 0.05,
+    readable      = TRUE
+  )
+  
+  return(eGO)
+ 
+})
+
+#pathway.ls <- gene.ls %>% map(~{
+#  ePathway <- enrichPathway(
+#    gene = .x,
+#    pvalueCutoff = 0.05,
+#    readable = TRUE, 
+#  )
+#  return(ePathway)
+#})
+
+kegg.ls <- gene.ls %>% map(~{
+  eKEGG <- enrichKEGG(
+    gene = .x,
+    pvalueCutoff = 0.05, 
+    organism = 'mmu'
+  )
+  
+  # Check if eKEGG is NULL
+  if (is.null(eKEGG)) {
+    # If it's NULL, return an empty data frame
+    return(data.frame())
+  } else {
+    # Otherwise, return eKEGG
+    return(eKEGG)
+  }
+})
+```
+
+
+```{r}
+# If the object is not a data frame, convert it into a data frame
+go.ls <- lapply(go.ls, as.data.frame)
+# Check the type and structure of the first object in kegg.ls
+
+
+# If the object is not a data frame, convert it into a data frame
+kegg.ls <- lapply(kegg.ls, as.data.frame)
+## enrichment visu
+barplotTerm <- function(object,
+                        x = "Count",
+                        color = 'p.adjust',
+                        showCategory = 8,
+                        font.size = 12,
+                        title = "") {
+  ## use *height* to satisy barplot generic definition
+  ## actually here is an enrichResult object.
+  colorBy <- color
+  
+  df <- fortify(object, showCategory = showCategory, by = x)
+  
+  # Convert p.adjust to numeric and handle non-numeric values or NA values
+  df$p.adjust <- as.numeric(df$p.adjust)
+  df$p.adjust[is.na(df$p.adjust)] <- 1  # replace NA with 1
+  df$p.adjust <- -log10(df$p.adjust)
+  
+  if (colorBy %in% colnames(df)) {
+    p <-
+      ggplot(df, aes_string(x = x, y = "Description", fill = colorBy)) +
+      theme_dose(font.size) +
+      scale_fill_continuous(
+        low = "red",
+        high = "blue",
+        name = color,
+        guide = guide_colorbar(reverse = TRUE)
+      )
+  } else {
+    p <- ggplot(df, aes_string(x = x, y = "Description")) +
+      theme_dose(font.size) +
+      theme(legend.position = "none")
+  }
+  
+  p + geom_col(fill = color) + ggtitle(title) + xlab('-log10 FDR') + ylab(NULL)
+}
+
+lapply(1:length(gene.ls), function(x){
+  name <- names(gene.ls)[[x]]
+  g1 = barplotTerm(go.ls[[x]], showCategory = 10, title = paste0(name, " GO"), color = 'blue', x = 'p.adjust')
+  g3 = barplotTerm(kegg.ls[[x]], showCategory = 10, title = paste0(name, " KEGG"), color = 'blue', x = 'p.adjust')
+  print(g1)
+  print(g3)
+})
+```
+
+
+# GSEA analysis
+
+https://crazyhottommy.github.io/scRNA-seq-workshop-Fall-2019/scRNAseq_workshop_3.html
+
+Instalamos Presto.
+
+```{r}
+suppressPackageStartupMessages(library(presto))
+Bcell.genes <- wilcoxauc(data_integrated_VDJ, 'seurat_clusters')
+head(Bcell.genes)
+```
+
+```{r}
+# we have all the genes for each cluster
+dplyr::count(Bcell.genes, group)
+```
+
+```{r}
+library(msigdbr)
+library(fgsea)
+msigdbr_species()
+```
+
+```{r}
+# El C7 es immunologic signature gene sets
+m_df<- msigdbr(species = "Mus musculus", category = "C7")
+head(m_df)
+```
+
+Aplicamos un gene set de :https://www.gsea-msigdb.org/gsea/msigdb/cards/GSE11386_NAIVE_VS_MEMORY_BCELL_DN
+
+
+```{r}
+fgsea_sets<- m_df %>% split(x = .$gene_symbol, f = .$gs_name)
+
+fgsea_sets$GSE22886_NAIVE_BCELL_VS_BM_PLASMA_CELL_DN
+```
+
+# Clustering
+
+```{r}
+Bcell.genes.0 <- Bcell.genes %>% dplyr::filter(group == "0") %>% arrange(desc(logFC),desc(auc)) %>% head(n = 10)
+```
+
+
+```{r}
+library(stats)
+# select only the feature and auc columns for fgsea, which statistics to use is an open question
+# we use the same as the paper
+cluster0.genes <- Bcell.genes %>% dplyr::filter(group == "0") %>%   arrange(desc(auc)) %>% dplyr::select(feature, auc)
+ranks0<- deframe(cluster0.genes)
+cluster1.genes <- Bcell.genes %>% dplyr::filter(group == "1") %>%   arrange(desc(auc)) %>% dplyr::select(feature, auc)
+ranks1<- deframe(cluster1.genes)
+cluster2.genes <- Bcell.genes %>% dplyr::filter(group == "2") %>%   arrange(desc(auc)) %>% dplyr::select(feature, auc)
+ranks2<- deframe(cluster2.genes)
+cluster3.genes <- Bcell.genes %>% dplyr::filter(group == "3") %>%   arrange(desc(auc)) %>% dplyr::select(feature, auc)
+ranks3<- deframe(cluster3.genes)
+cluster4.genes <- Bcell.genes %>% dplyr::filter(group == "4") %>%   arrange(desc(auc)) %>% dplyr::select(feature, auc)
+ranks4<- deframe(cluster4.genes)
+cluster5.genes <- Bcell.genes %>% dplyr::filter(group == "5") %>%   arrange(desc(auc)) %>% dplyr::select(feature, auc)
+ranks5<- deframe(cluster5.genes)
+cluster6.genes <- Bcell.genes %>% dplyr::filter(group == "6") %>%   arrange(desc(auc)) %>% dplyr::select(feature, auc)
+ranks6<- deframe(cluster6.genes)
+cluster7.genes <- Bcell.genes %>% dplyr::filter(group == "7") %>%   arrange(desc(auc)) %>% dplyr::select(feature, auc)
+ranks7<- deframe(cluster7.genes)
+cluster8.genes <- Bcell.genes %>% dplyr::filter(group == "8") %>%   arrange(desc(auc)) %>% dplyr::select(feature, auc)
+ranks8<- deframe(cluster8.genes)
+cluster9.genes <- Bcell.genes %>% dplyr::filter(group == "9") %>%   arrange(desc(auc)) %>% dplyr::select(feature, auc)
+ranks9<- deframe(cluster9.genes)
+cluster10.genes <- Bcell.genes %>% dplyr::filter(group == "10") %>%   arrange(desc(auc)) %>% dplyr::select(feature, auc)
+ranks10<- deframe(cluster10.genes)
+```
+
+```{r}
+fgseaRes0 <- fgsea(fgsea_sets, stats = ranks0, scoreType = "pos",eps=0)
+fgseaRes1 <- fgsea(fgsea_sets, stats = ranks1, scoreType = "pos",eps=0)
+fgseaRes2 <- fgsea(fgsea_sets, stats = ranks2, scoreType = "pos",eps=0)
+fgseaRes3 <- fgsea(fgsea_sets, stats = ranks3, scoreType = "pos",eps=0)
+fgseaRes4 <- fgsea(fgsea_sets, stats = ranks4, scoreType = "pos",eps=0)
+fgseaRes5 <- fgsea(fgsea_sets, stats = ranks5, scoreType = "pos",eps=0)
+fgseaRes6 <- fgsea(fgsea_sets, stats = ranks6, scoreType = "pos",eps=0)
+fgseaRes7 <- fgsea(fgsea_sets, stats = ranks7, scoreType = "pos",eps=0)
+fgseaRes8 <- fgsea(fgsea_sets, stats = ranks8, scoreType = "pos",eps=0)
+fgseaRes9 <- fgsea(fgsea_sets, stats = ranks9, scoreType = "pos",eps=0)
+fgseaRes10 <- fgsea(fgsea_sets, stats = ranks10, scoreType = "pos",eps=0)
+```
+
+```{r}
+fgseaResTidy0 <- fgseaRes0 %>% as_tibble() %>% arrange(desc(NES)) %>%  dplyr::select(-leadingEdge, -ES) %>%  arrange(padj)
+fgseaResTidy1 <- fgseaRes1 %>% as_tibble() %>% arrange(desc(NES)) %>%  dplyr::select(-leadingEdge, -ES) %>%  arrange(padj)
+fgseaResTidy2 <- fgseaRes2 %>% as_tibble() %>% arrange(desc(NES)) %>%  dplyr::select(-leadingEdge, -ES) %>%  arrange(padj)
+fgseaResTidy3 <- fgseaRes3 %>% as_tibble() %>% arrange(desc(NES)) %>%  dplyr::select(-leadingEdge, -ES) %>%  arrange(padj)
+fgseaResTidy4 <- fgseaRes4 %>% as_tibble() %>% arrange(desc(NES)) %>%  dplyr::select(-leadingEdge, -ES) %>%  arrange(padj)
+fgseaResTidy5 <- fgseaRes5 %>% as_tibble() %>% arrange(desc(NES)) %>%  dplyr::select(-leadingEdge, -ES) %>%  arrange(padj)
+fgseaResTidy6 <- fgseaRes6 %>% as_tibble() %>% arrange(desc(NES)) %>%  dplyr::select(-leadingEdge, -ES) %>%  arrange(padj)
+fgseaResTidy7 <- fgseaRes7 %>% as_tibble() %>% arrange(desc(NES)) %>%  dplyr::select(-leadingEdge, -ES) %>%  arrange(padj)
+fgseaResTidy8 <- fgseaRes8 %>% as_tibble() %>% arrange(desc(NES)) %>%  dplyr::select(-leadingEdge, -ES) %>%  arrange(padj)
+fgseaResTidy9 <- fgseaRes9 %>% as_tibble() %>% arrange(desc(NES)) %>%  dplyr::select(-leadingEdge, -ES) %>%  arrange(padj)
+fgseaResTidy10 <- fgseaRes10 %>% as_tibble() %>% arrange(desc(NES)) %>%  dplyr::select(-leadingEdge, -ES) %>%  arrange(padj)
+```
+
+
+##  Plot a barplot for with the normalized Enrichment score
+
+## Cluster 0
+
+```{r}
+plotEnrichment(fgsea_sets[["GSE13411_NAIVE_BCELL_VS_PLASMA_CELL_UP"]],
+               ranks0) + labs(title="GSE13411_NAIVE_BCELL_VS_PLASMA_CELL_UP")
+```
+	
+padj= 4.222452e-07
+NES = 4.10810
+size= 174
+
+A NES of 4.10810 indicates a substantial enrichment of genes that are upregulated in plasma cells compared to naive B cells.
+This value represents the number of genes within the analyzed gene set that are associated with the comparison of interest (in this case, genes upregulated in plasma cells compared to naive B cells).
+
+```{r}
+plotEnrichment(fgsea_sets[["GSE17186_MEMORY_VS_NAIVE_BCELL_UP"]],
+               ranks0) + labs(title="GSE17186_MEMORY_VS_NAIVE_BCELL_UP")
+```
+Es importante considerar que la clasificación de los clusters basada únicamente en la expresión génica puede llevar a interpretaciones ambiguas. A veces, los linfocitos B activados pueden expresar genes asociados tanto con la memoria como con la fase ingenua. Por lo tanto, es esencial corroborar estas observaciones con otros marcadores o análisis adicionales para confirmar si el cluster realmente contiene células de memoria o si hay una sobreposición con células ingenuas activadas.
+
+Si los marcadores específicos indican que este cluster tiene tanto células ingenuas como células ingenuas activadas, puede explicar la dispersión de las líneas negras perpendiculares en el análisis GSEA
+
+```{r}
+plotEnrichment(fgsea_sets[["GSE25677_MPL_VS_R848_STIM_BCELL_DN"]],
+               ranks0) + labs(title="GSE25677_MPL_VS_R848_STIM_BCELL_DN")
+```
+
+```{r}
+plotEnrichment(fgsea_sets[["GSE12366_PLASMA_CELL_VS_NAIVE_BCELL_DN"]],
+               ranks0) + labs(title="GSE12366_PLASMA_CELL_VS_NAIVE_BCELL_DN")
+```
+Identifica genes que están disminuidos en las células plasmáticas en comparación con los LB naive.
+padj= 4.124634e-12
+NES = 5.149475
+size= 178
+
+# Cluster 1
+
+```{r}
+plotEnrichment(fgsea_sets[["GSE42724_NAIVE_BCELL_VS_PLASMABLAST_DN"]],
+               ranks1) + labs(title="GSE42724_NAIVE_BCELL_VS_PLASMABLAST_DN")
+```
+NES= 3.43
+padj= 3.24e-06
+size= 172
+
+```{r}
+plotEnrichment(fgsea_sets[["GSE22886_NAIVE_VS_IGM_MEMORY_BCELL_DN"]],
+               ranks1) + labs(title="GSE22886_NAIVE_VS_IGM_MEMORY_BCELL_DN")
+```
+
+padj:1.428068e-08
+NES: 3.951188
+Size: 188
+
+```{r}
+plotEnrichment(fgsea_sets[["GSE22886_NAIVE_VS_IGG_IGA_MEMORY_BCELL_DN"]],
+               ranks1) + labs(title="GSE22886_NAIVE_VS_IGG_IGA_MEMORY_BCELL_DN")
+```
+
+Hay memoria Switched y hay tambien plasmablastos.
+
+
+# Cluster 2
+
+```{r}
+plotEnrichment(fgsea_sets[["GSE13411_PLASMA_CELL_VS_MEMORY_BCELL_DN"]],
+               ranks2) + labs(title="GSE13411_PLASMA_CELL_VS_MEMORY_BCELL_DN")
+```
+
+padj: 4.28068e-08
+NES: 3.98
+size:188
+
+```{r}
+plotEnrichment(fgsea_sets[["GSE13411_SWITCHED_MEMORY_BCELL_VS_PLASMA_CELL_UP"]],
+               ranks2) + labs(title="GSE13411_SWITCHED_MEMORY_BCELL_VS_PLASMA_CELL_UP")
+```
+```{r}
+plotEnrichment(fgsea_sets[["GSE13411_IGM_VS_SWITCHED_MEMORY_BCELL_DN"]],
+               ranks2) + labs(title="GSE13411_IGM_VS_SWITCHED_MEMORY_BCELL_DN")
+```
+Genes down-regulated in comparison of IgM-memory B cells versus Ig isotype switched memory B cells.
+NES = 3.75
+padj= 9.063686e-07
+
+```{r}
+plotEnrichment(fgsea_sets[["GSE22886_IGM_MEMORY_BCELL_VS_BM_PLASMA_CELL_UP"]],
+               ranks2) + labs(title="GSE22886_IGM_MEMORY_BCELL_VS_BM_PLASMA_CELL_UP")
+
+```
+Genes up-regulated in comparison of memory IgM B cells versus plasma cells from bone marrow and blood.
+padj: 3.962311e-17
+NES: 6.01
+
+```{r}
+plotEnrichment(fgsea_sets[["GSE13411_NAIVE_VS_IGM_MEMORY_BCELL_DN"]],
+               ranks2) + labs(title="GSE13411_NAIVE_VS_IGM_MEMORY_BCELL_DN")
+```
+padj: 3.15507e-07
+NES : 3.97
+
+# Cluster 3
+
+```{r}
+plotEnrichment(fgsea_sets[["GSE38696_LIGHT_ZONE_VS_DARK_ZONE_BCELL_UP"]],
+               ranks3) + labs(title="GSE38696_LIGHT_ZONE_VS_DARK_ZONE_BCELL_UP")
+```
+Hay expansión clonal e isotype switching. 
+
+```{r}
+plotEnrichment(fgsea_sets[["GSE11386_NAIVE_VS_MEMORY_BCELL_DN"]],
+               ranks3) + labs(title="GSE11386_NAIVE_VS_MEMORY_BCELL_DN")
+```
+
+Hay linfocitos B de memoria.
+
+```{r}
+plotEnrichment(fgsea_sets[["GSE13411_IGM_MEMORY_BCELL_VS_PLASMA_CELL_UP"]],
+               ranks3) + labs(title="GSE13411_IGM_MEMORY_BCELL_VS_PLASMA_CELL_UP")
+GSE22886_IGM_MEMORY_BCELL_VS_BM_PLASMA_CELL_UP
+```
+
+```{r}
+plotEnrichment(fgsea_sets[["GSE22886_IGM_MEMORY_BCELL_VS_BM_PLASMA_CELL_UP"]],
+               ranks3) + labs(title="GSE22886_IGM_MEMORY_BCELL_VS_BM_PLASMA_CELL_UP")
+```
+
+
+```{r}
+plotEnrichment(fgsea_sets[["GSE13411_IGM_VS_SWITCHED_MEMORY_BCELL_DN"]],
+               ranks3) + labs(title="GSE13411_IGM_VS_SWITCHED_MEMORY_BCELL_DN")
+```
+Este indica que etán activadas y que tienen un programming temprano hacua linfocitos B memoria.
+
+# Cluster 4
+
+```{r}
+plotEnrichment(fgsea_sets[["GSE42724_NAIVE_BCELL_VS_PLASMABLAST_UP"]],
+               ranks4) + labs(title="GSE42724_NAIVE_BCELL_VS_PLASMABLAST_UP")
+```
+
+```{r}
+plotEnrichment(fgsea_sets[["GSE42724_NAIVE_VS_MEMORY_BCELL_DN"]],
+               ranks4) + labs(title="GSE42724_NAIVE_VS_MEMORY_BCELL_DN")	
+```
+Hay memoria.
+
+```{r}
+plotEnrichment(fgsea_sets[["GSE42724_NAIVE_VS_B1_BCELL_UP"]],
+               ranks4) + labs(title="GSE42724_NAIVE_VS_B1_BCELL_UP")	
+
+```
+
+```{r}
+plotEnrichment(fgsea_sets[["GSE42724_MEMORY_BCELL_VS_PLASMABLAST_UP"]],
+               ranks4) + labs(title="GSE42724_MEMORY_BCELL_VS_PLASMABLAST_UP")	
+
+```
+
+```{r}
+plotEnrichment(fgsea_sets[["GSE42724_NAIVE_BCELL_VS_PLASMABLAST_DN"]],
+               ranks4) + labs(title="GSE42724_NAIVE_BCELL_VS_PLASMABLAST_DN")
+
+```
+
+
+```{r}
+plotEnrichment(fgsea_sets[["GSE11961_MEMORY_BCELL_DAY7_VS_GERMINAL_CENTER_BCELL_DAY7_UP"]],
+               ranks4) + labs(title="GSE11961_MEMORY_BCELL_DAY7_VS_GERMINAL_CENTER_BCELL_DAY7_UP")
+```
+
+No están tan en expansión como el cluster 3.
+
+```{r}
+plotEnrichment(fgsea_sets[["GSE22886_NAIVE_VS_IGM_MEMORY_BCELL_DN"]],
+               ranks4) + labs(title="GSE22886_NAIVE_VS_IGM_MEMORY_BCELL_DN")
+	
+```
+
+# Cluster 5
+
+```{r}
+plotEnrichment(fgsea_sets[["GSE13411_IGM_VS_SWITCHED_MEMORY_BCELL_DN"]],
+               ranks5) + labs(title="GSE13411_IGM_VS_SWITCHED_MEMORY_BCELL_DN")
+
+```
+
+```{r}
+plotEnrichment(fgsea_sets[["GSE13411_SWITCHED_MEMORY_BCELL_VS_PLASMA_CELL_UP"]],
+               ranks5) + labs(title="GSE13411_SWITCHED_MEMORY_BCELL_VS_PLASMA_CELL_UP")
+```
+
+```{r}
+plotEnrichment(fgsea_sets[["GSE22886_NAIVE_VS_IGG_IGA_MEMORY_BCELL_DN"]],
+               ranks5) + labs(title="GSE22886_NAIVE_VS_IGG_IGA_MEMORY_BCELL_DN")
+```
+```{r}
+plotEnrichment(fgsea_sets[["GSE12845_IGD_POS_BLOOD_VS_NAIVE_TONSIL_BCELL_DN"]],
+               ranks5) + labs(title="GSE12845_IGD_POS_BLOOD_VS_NAIVE_TONSIL_BCELL_DN")
+
+```
+
+```{r}
+plotEnrichment(fgsea_sets[["GSE13411_IGM_VS_SWITCHED_MEMORY_BCELL_DN"]],
+               ranks5) + labs(title="GSE13411_IGM_VS_SWITCHED_MEMORY_BCELL_DN")
+```
+
+```{r}
+plotEnrichment(fgsea_sets[["GSE28237_EARLY_VS_LATE_GC_BCELL_DN"]],
+               ranks5) + labs(title="GSE28237_EARLY_VS_LATE_GC_BCELL_DN")
+
+```
+```{r}
+plotEnrichment(fgsea_sets[["GSE12366_GC_VS_MEMORY_BCELL_DN"]],
+               ranks5) + labs(title="GSE12366_GC_VS_MEMORY_BCELL_DN")
+
+```
+
+Son memoria con switch-classed
+
+# Cluster 6
+
+```{r}
+plotEnrichment(fgsea_sets[["GSE42724_MEMORY_BCELL_VS_PLASMABLAST_UP"]],
+               ranks6) + labs(title="GSE42724_MEMORY_BCELL_VS_PLASMABLAST_UP")
+
+```
+
+Son LB memoria.
+
+```{r}
+plotEnrichment(fgsea_sets[["GSE22886_NAIVE_VS_IGG_IGA_MEMORY_BCELL_DN"]],
+               ranks6) + labs(title="GSE22886_NAIVE_VS_IGG_IGA_MEMORY_BCELL_DN")
+
+```
+
+
+```{r}
+plotEnrichment(fgsea_sets[["GSE22886_IGG_IGA_MEMORY_BCELL_VS_BM_PLASMA_CELL_UP"]],
+               ranks6) + labs(title="GSE22886_IGG_IGA_MEMORY_BCELL_VS_BM_PLASMA_CELL_UP")
+```
+Memori< con Tienen isotype switch.
+
+# Cluster 7
+
+```{r}
+
+plotEnrichment(fgsea_sets[["GSE22886_NAIVE_BCELL_VS_NEUTROPHIL_UP"]],
+               ranks7) + labs(title="GSE22886_NAIVE_BCELL_VS_NEUTROPHIL_UP")
+```
+```{r}
+plotEnrichment(fgsea_sets[["GSE12366_PLASMA_CELL_VS_NAIVE_BCELL_DN"]],
+               ranks7) + labs(title="GSE12366_PLASMA_CELL_VS_NAIVE_BCELL_DN")
+```
+
+# CLuster 8
+
+```{r}
+plotEnrichment(fgsea_sets[["GSE42724_MEMORY_BCELL_VS_PLASMABLAST_DN"]],
+               ranks8) + labs(title="GSE42724_MEMORY_BCELL_VS_PLASMABLAST_DN")
+
+```
+
+```{r}
+plotEnrichment(fgsea_sets[["GSE12366_GC_BCELL_VS_PLASMA_CELL_UP"]],
+               ranks8) + labs(title="GSE12366_GC_BCELL_VS_PLASMA_CELL_UP")
+
+```
+
+Como que aun no ha llegado a plasmática, es más de centro germinal avanzado.
+
+```{r}
+plotEnrichment(fgsea_sets[["GSE38696_LIGHT_ZONE_VS_DARK_ZONE_BCELL_UP"]],
+               ranks8) + labs(title="GSE38696_LIGHT_ZONE_VS_DARK_ZONE_BCELL_UP")
+
+
+```
+
+
+# Cluster 9
+
+```{r}
+#GSE13411_PLASMA_CELL_VS_MEMORY_BCELL_UP
+plotEnrichment(fgsea_sets[["GSE12366_PLASMA_CELL_VS_NAIVE_BCELL_UP"]],
+               ranks9) + labs(title="GSE12366_PLASMA_CELL_VS_NAIVE_BCELL_UP")
+```
+
+Son claramente plasmáticas.
+
+# Cluster 10
+
+```{r}
+plotEnrichment(fgsea_sets[["GSE12366_GC_VS_MEMORY_BCELL_UP"]],
+               ranks10) + labs(title="GSE12366_GC_VS_MEMORY_BCELL_UP")
+```
+
+```{r}
+plotEnrichment(fgsea_sets[["GSE11386_NAIVE_VS_MEMORY_BCELL_UP"]],
+               ranks10) + labs(title="GSE11386_NAIVE_VS_MEMORY_BCELL_UP")
+
+```
+
+```{r}
+plotEnrichment(fgsea_sets[["GSE22886_NAIVE_VS_IGM_MEMORY_BCELL_DN"]],
+               ranks10) + labs(title="GSE22886_NAIVE_VS_IGM_MEMORY_BCELL_DN")
+
+```
+
+# Todos los clusters, lo haremos con FindMarkers
+
+El Findmarkers tambien usa suma rango de Wilcoxon
+
+```{r}
+Bcell.genes.9 <- FindMarkers(data_integrated_VDJ, ident.1 = "9", ident.2 = NULL, logfc.threshold = -Inf, min.pct = -Inf, min.diff.pct = -Inf,test.use = "roc")
+head(Bcell.genes.9)
+head(Bcell.genes)
+```
+
+```{r}
+# Naive B cells
+Bcell.genes.9 %>% Bcell.genes.9 %>%
+  arrange(desc(logFC), desc(auc)) %>%
+  head(n = 10)
+```
+
+```{r}
+library(stats)
+# we feel assured to see Cd79a,junb, Fcer2a which are marker genes for naive B cells.
+
+# select only the feature and auc columns for fgsea, which statistics to use is an open question
+# we use the same as the paper
+cluster9.genes<- Bcell.genes.9 %>%
+  arrange(desc(auc)) %>% 
+  dplyr::select(rownames(Bcell.genes.9), auc)
+
+ranks<- deframe(cluster9.genes)
+
+head(ranks)
+```
+
+```{r}
+fgseaRes<- fgsea(fgsea_sets, stats = ranks, scoreType = "pos",eps=0)
+```
+
+```{r}
+fgseaResTidy <- fgseaRes %>% as_tibble() %>% arrange(desc(NES))
+
+
+fgseaResTidy %>% 
+  dplyr::select(-leadingEdge, -ES) %>% 
+  arrange(padj) %>% 
+  head()
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

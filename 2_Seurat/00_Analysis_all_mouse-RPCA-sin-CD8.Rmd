@@ -1,0 +1,647 @@
+---
+title: "Analysis_all_mouse"
+author: "Enric Vercher"
+date: "2023-10-18"
+output: html_document
+---
+
+```{r}
+suppressPackageStartupMessages({library(parallel)
+library(Seurat)
+library(ggplot2)
+library(dplyr)
+library(tidyverse)
+library(patchwork)
+library(DoubletFinder)
+library(sctransform)
+library(glmGamPoi)
+library(SeuratDisk)
+library(SeuratData)
+
+library(scales)
+library(scRepertoire)
+library(knitr)
+
+#para las paletas de colores personalizadas
+library(scCustomize)
+library(qs)})
+suppressPackageStartupMessages(library(ComplexHeatmap))
+```
+
+
+```{r}
+mouse_44.data <- Read10X(data.dir = "C:/Users/d940401/Desktop/Analisis_Seurat/mouse_44/")
+m.44 <- CreateSeuratObject(counts = mouse_44.data, project = "m.44", min.cells = 3, min.features = 200)
+mouse_45.data <- Read10X(data.dir = "C:/Users/d940401/Desktop/Analisis_Seurat/mouse_45/")
+m.45 <- CreateSeuratObject(counts = mouse_45.data, project = "m.45", min.cells = 3, min.features = 200)
+mouse_48.data <- Read10X(data.dir = "C:/Users/d940401/Desktop/Analisis_Seurat/mouse_48_filtered_feature_bc_matrix/")
+m.48 <- CreateSeuratObject(counts = mouse_48.data, project = "m.48", min.cells = 3, min.features = 200)
+mouse_49.data <- Read10X(data.dir = "C:/Users/d940401/Desktop/Analisis_Seurat/mouse_49/")
+m.49 <- CreateSeuratObject(counts = mouse_49.data, project = "m.49", min.cells = 3, min.features = 200)
+mouse_50.data <- Read10X(data.dir = "C:/Users/d940401/Desktop/Analisis_Seurat/mouse_50/")
+m.50 <- CreateSeuratObject(counts = mouse_50.data, project = "m.50", min.cells = 3, min.features = 200)
+mouse_52.data <- Read10X(data.dir = "C:/Users/d940401/Desktop/Analisis_Seurat/mouse_52/")
+m.52 <- CreateSeuratObject(counts = mouse_52.data, project = "m.52", min.cells = 3, min.features = 200)
+```
+
+```{r}
+# Merge datasets into one single seurat object
+alldata <- merge(m.44, c(m.45, m.48, m.49, m.50,m.52), add.cell.ids = c("m.44", "m.45", "m.48", "m.49", "m.50","m.52"))
+# remove all objects that will not be used.
+rm(mouse_44.data, mouse_45.data,mouse_48.data,mouse_49.data,mouse_50.data,mouse_52.data)
+# run garbage collect to free up memory
+gc()
+```
+
+# Calculate QC
+
+```{r}
+alldata <- PercentageFeatureSet(alldata, "^mt-", col.name = "percent.mt")
+alldata <- PercentageFeatureSet(alldata,  "^Rp[sl]", col.name = "percent_ribo")
+```
+
+```{r}
+feats <- c("nFeature_RNA", "nCount_RNA", "percent.mt", "percent_ribo")
+feats_vln <- VlnPlot(alldata, group.by = "orig.ident", features = feats, pt.size = 0.5, ncol = 2) +
+    NoLegend()
+feats_vln
+```
+
+
+```{r}
+plot_2 <- FeatureScatter(alldata, "nCount_RNA", "nFeature_RNA", group.by = "orig.ident", pt.size = 0.5)
+plot_2
+```
+
+# Filtering
+
+Consider cells with at least 200 detected genes and genes need to be expressed in at least 3 cells
+
+```{r}
+selected_c <- WhichCells(alldata, expression = nFeature_RNA > 200)
+selected_f <- rownames(alldata)[Matrix::rowSums(alldata) > 3]
+data.filt <- subset(alldata, features = selected_f, cells = selected_c)
+```
+
+
+```{r}
+dim(alldata)
+dim(data.filt)
+```
+Later we will apply DobletFinder
+
+```{r}
+# Compute the relative expression of each gene per cell Use sparse matrix
+# operations, if your dataset is large, doing matrix devisions the regular way
+# will take a very long time.
+par(mar = c(4, 8, 2, 1))
+C <- data.filt@assays$RNA@counts
+C <- Matrix::t(Matrix::t(C)/Matrix::colSums(C)) * 100
+most_expressed <- order(apply(C, 1, median), decreasing = T)[20:1]
+```
+
+```{r}
+# boxplot(as.matrix(t(C[most_expressed, ])), cex = 0.1, las = 1, xlab = "% total count per cell",
+#     col = (scales::hue_pal())(20)[20:1], horizontal = TRUE)
+```
+
+Si observamos la expresión relativa de cada gen por célula, vemos que hay genes como m42418, cd74 o Malat1 que tendremos en cuenta por su alta expresión. Por ejemplo m42418 constituye hasta el 20% de los UMIs de una sola célula. 
+
+Es bastante común que los lincRNA nucleares tengan correlación con la calidad y las lecturas mitocondriales, por lo que la detección alta de m42418 puede ser un problema técnico. Habra que recabar algo de información sobre dichos genes, que son importantes para el control de calidad y el filtrado posterior.
+
+# Filtramos los genes mitocondriales.
+
+Los genes ribosomales los vamos a mantener.
+
+```{r}
+#vamos a ser conservadores y usaremos menor al 5%
+#4000 al mirar el violinplot, suelen usar 2500 tanto el paper de Ibai como el tutorial pero perdemos muchas células.
+data.filt <- subset(data.filt, subset = nFeature_RNA > 200 & nFeature_RNA < 4000 & percent.mt < 5)
+dim(data.filt)
+#hemos elminado 1567 células con estas características.
+table(alldata$orig.ident)
+table(data.filt$orig.ident)
+```
+
+```{r}
+feats <- c("nFeature_RNA", "nCount_RNA", "percent.mt", "percent_ribo")
+plot_3 <- VlnPlot(data.filt, group.by = "orig.ident", features = feats, pt.size = 0.5, ncol = 2) +
+    NoLegend()
+plot_3
+```
+
+```{r}
+#all_mouse_sin_CD8 <- readRDS("C:/Users/d940401/Desktop/Analisis_Seurat/all_mice_CCA_integrated_with_CC.rds")
+dim(data.filt)
+DefaultAssay(object = data.filt) <- "RNA"
+dim(data.filt)
+```
+```{r}
+table(Idents(data.filt))
+```
+
+# Filtramos aquellas que no expresem Cd8a, Cd3e ni Cd3g
+
+```{r}
+data.filt.sin.CD8 <- subset(data.filt, subset = Cd8a == 0 & Cd3e == 0 & Cd3g == 0)
+```
+
+```{r}
+dim(data.filt.sin.CD8)
+# How many cells are in each cluster before removing
+table(Idents(data.filt.sin.CD8))
+```
+Hemos eliminado 979 celulas CD8T
+
+# Normalization, findvariablefeatures and scaling.
+
+Tenemos que hacerlo por separado y luego lo volvemos a juntar.
+
+Fuente: https://satijalab.org/seurat/articles/integration_large_datasets.html
+
+Fuente: https://satijalab.org/seurat/articles/atomic_integration.html
+
+```{r}
+mice.list <- SplitObject(data.filt.sin.CD8, split.by = "orig.ident")
+```
+
+Solo el SCTtransform, luego los junto y vuelvo el app el tsNE, UMAP etc. MEJOR ASÍ
+
+```{r}
+for (i in 1:length(mice.list)) {
+  mice.list[[i]] <- SCTransform(mice.list[[i]], method = "glmGamPoi",vars.to.regress = c("nFeature_RNA", "percent.mt","percent_ribo"), vst.flavor = "v2", verbose = FALSE,variable.features.n = 3000)}
+#equivalente a lapply(X = mice.list, FUN = SCTransform, method = "glmGamPoi")
+```
+
+Creamos la funcion integrar de CCA:
+
+fuente: https://github.com/quadbio/scRNAseq_analysis_vignette/blob/master/Tutorial.md
+fuente: https://satijalab.org/seurat/articles/integration_rpca
+
+Mirar este paper para explicar esta parte de la integración en métodos:
+
+https://doi.org/10.1016/j.cell.2019.05.031
+
+"Comprehensive Integration of Single-Cell Data"
+
+```{r}
+integrate <- function(data_list){
+  data_features <- SelectIntegrationFeatures(object.list = data_list, nfeatures = 2200)
+  data_list <- PrepSCTIntegration(object.list = data_list, anchor.features = data_features) # en otro sitio utilizaban FastRPCAIntegration que no me funciono 
+  data_list <- lapply(X = data_list, FUN = RunPCA, features = data_features)
+  data_anchors <- FindIntegrationAnchors(object.list = data_list,
+                                         normalization.method = "SCT",
+                                         anchor.features = data_features,
+                                         dims=1:30,
+                                         reduction = "rpca",
+                                         verbose = TRUE,
+                                         k.anchor = 20)
+  data_integrated <- IntegrateData(anchorset = data_anchors,
+                                   normalization.method = "SCT",
+                                    dims = 1:30,
+                                   verbose = TRUE)
+  #data_integrated <- RunPCA(data_integrated, verbose = FALSE), algunos lo ponen aqui dentro
+  #data_integrated <- RunUMAP(data_integrated, dims = 1:30), algunos lo ponen aqui dentro
+  return(data_integrated)
+}
+
+data_integrated <- integrate(mice.list) 
+```
+
+This object is corrected. We just take the corrected Seurat object and re-run the procedure in Part 1, except for the first two steps (normalization and highly variable gene identification)
+
+```{r}
+set.seed(111)
+data_integrated <- ScaleData(data_integrated,verbose = FALSE) #ya esta escalado, no estoy seguro pero si lo vuelvo a escalar se queda igual
+data_integrated <- RunPCA(data_integrated, npcs = 50,verbose = FALSE)
+data_integrated <- RunUMAP(data_integrated, dims = 1:20)
+data_integrated <- RunTSNE(data_integrated, dims = 1:20)
+data_integrated <- FindNeighbors(data_integrated, dims = 1:20) %>% FindClusters(resolution = 0.1) #a high resolution parameter is used to get a finer clustering. 
+```
+
+```{r}
+ElbowPlot(data_integrated, ndims = 20)
+#con 10 componentes lo vemos
+```
+
+```{r}
+DimPlot_scCustom(data_integrated,reduction = "umap", group.by = "orig.ident",
+                 colors_use = DiscretePalette_scCustomize(num_colors = 6, palette = "polychrome", shuffle_pal = TRUE))
+DimPlot_scCustom(data_integrated,reduction = "pca",group.by = "orig.ident",
+                 colors_use = DiscretePalette_scCustomize(num_colors = 6, palette = "polychrome", shuffle_pal = TRUE))
+DimPlot_scCustom(data_integrated,reduction = "tsne", group.by = "orig.ident",
+                 colors_use = DiscretePalette_scCustomize(num_colors = 6, palette = "polychrome", shuffle_pal = TRUE))
+UMAPPlot(data_integrated, label = T)
+```
+
+```{r}
+plot1 <- UMAPPlot(data_integrated, group.by="orig.ident")
+plot2 <- UMAPPlot(data_integrated, label = T)
+plot3 <-FeaturePlot_scCustom(data_integrated, features = c("Cd79a", "Sdc1", "Ptprc", "Ighm"), pt.size = 0.1)
+((plot1 / plot2) | plot3) + plot_layout(width = c(1,2))
+```
+
+# Data integration using Seurat with CCA (as atlas-B cell)
+
+Este es el que hemos hecho.
+
+fuente: https://github.com/quadbio/scRNAseq_analysis_vignette/blob/master/Tutorial.md
+
+# Run DoubletFinder
+
+```{r}
+set.seed(111)
+#pK identification (no ground-truth)
+library(DoubletFinder)
+m.all.sweep.res <- paramSweep_v3(data_integrated, PCs = 1:10, sct = TRUE)
+sweep.stats_m.all <- summarizeSweep(m.all.sweep.res)
+bcmvn_m.all <- find.pK(sweep.stats_m.all)
+barplot(bcmvn_m.all$BCmetric, names.arg = bcmvn_m.all$pK, las=2)
+```
+
+```{r}
+set.seed(111)
+# Optimal pK is the max of the bomodality coefficent (BCmvn) distribution
+bcmvn.max <- bcmvn_m.all[which.max(bcmvn_m.all$BCmetric),]
+optimal.pk <- bcmvn.max$pK
+optimal.pk <- as.numeric(levels(optimal.pk))[optimal.pk]
+```
+
+```{r}
+set.seed(111)
+## Homotypic Doublet Proportion Estimate -------------------------------------------------------------------------------------
+#heterotypic doublet: two different cells, different expression profiles
+#homotypic doublet: two cells of same/similar cell type, similar expression profiles
+annotations <- data_integrated@meta.data$seurat_clusters
+homotypic.prop <- modelHomotypic(annotations)           
+nExp_poi <- round(optimal.pk*nrow(data_integrated@meta.data))  ## Assuming 7.5% doublet formation rate - tailor for your dataset. Our case is approximately 0.8%.
+nExp_poi.adj <- round(nExp_poi*(1-homotypic.prop))
+
+# run DoubletFinder
+m.all.doblet <- doubletFinder_v3(seu = data_integrated, 
+                                   PCs = 1:10, 
+                                   pK = optimal.pk,
+                                   nExp = nExp_poi.adj,sct = TRUE)
+
+# name of the DF prediction can change, so extract the correct column name.
+DF.name = colnames(m.all.doblet@meta.data)[grepl("DF.classification", colnames(m.all.doblet@meta.data))]
+
+cowplot::plot_grid(ncol = 2, DimPlot_scCustom(m.all.doblet, group.by = "orig.ident") + NoAxes(),
+    DimPlot(m.all.doblet, group.by = DF.name) + NoAxes())
+```
+
+```{r}
+UMAPPlot(m.all.doblet, label = T)
+```
+
+```{r}
+#saveRDS(m.all.doblet, file="all_mice_RPCA_integrated-sin-CD8"))
+#Lo guardamos luego al añadirle el ciclo celular.
+```
+
+```{r}
+#We should expect that two cells have more detected genes than a single cell, lets check if our predicted doublets also have more detected genes in general.
+VlnPlot(m.all.doblet, features = "nFeature_RNA", group.by = DF.name, pt.size = 0.1)
+```
+
+```{r}
+dim(data_integrated)
+m.all.wo.doblet = m.all.doblet[, m.all.doblet@meta.data[, DF.name] == "Singlet"]
+dim(m.all.wo.doblet)
+```
+Hay 572 células clasificadas como doblet, de momento no las vamos a eliminar.
+
+```{r}
+#m.all.doblet <- as.data.frame(m.all.doblet@meta.data)
+dim(m.all.doblet)
+m.all.wo.doblet_df <- as.data.frame(m.all.wo.doblet@meta.data)
+``` 
+Si queremos ver como se distribuyen los dobletes por cluster:
+
+```{r}
+# Load the dplyr package
+library(dplyr)
+m.all.wo.doblet_df <- as.data.frame(m.all.wo.doblet@meta.data)
+m.all.doblet_df <- as.data.frame(m.all.doblet@meta.data)
+# Assuming your dataframe is named df
+m.all.doblet_df %>%
+  group_by(seurat_clusters) %>%
+  summarise(doublet_percentage = mean(DF.classifications_0.25_0.06_572 == "Doublet") * 100)
+```
+
+Parece que se detectan dobletes en las zonas donde hay mas LB expandidos como luego veremos. No veo necesario eliminarlos de momento.
+
+# SI ELIMINAMOS LOS DOBLETES
+
+Si los eliminamos:
+```{r}
+# Eliminar las células clasificadas como Doublet
+all_mice_RPCA_integrated_sin_CD8_sin_doublet <- subset(all_mice_RPCA_integrated_sin_CD8_doublet, subset = DF.classifications_0.25_0.06_572 != "Doublet")
+```
+
+```{r}
+all_mice_RPCA_integrated_sin_CD8_sin_doublet <- FindNeighbors(all_mice_RPCA_integrated_sin_CD8_sin_doublet, dims = 1:20) %>% FindClusters(resolution = 0.1) #a high resolution parameter is used to get a finer clustering.
+```
+
+```{r}
+UMAPPlot(all_mice_RPCA_integrated_sin_CD8_sin_doublet, label = T)
+```
+
+# Marcadores diferencialmente expresados
+
+```{r}
+m.all.markers <- FindAllMarkers(data_integrated, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+m.all.markers %>%
+    group_by(cluster) %>%
+    slice_max(n = 20, order_by = avg_log2FC)
+#write.table(m.all.markers, "C:/Users/d940401/Desktop/Analisis_Seurat/all-markers-DE-CCA-sin-Cd8.tsv", sep = "/t", row.names = FALSE)
+```
+
+```{r}
+top5_cl_markers <- m.all.markers %>% group_by(cluster) %>% top_n(n = 10, wt = avg_log2FC)
+DoHeatmap(data_integrated, features = top5_cl_markers$gene) + NoLegend()
+```
+
+```{r}
+metadata_df <- as.data.frame(data_integrated@meta.data)
+View(metadata_df)
+saveRDS(data_integrated, file="all_mice_integrated_sin_CC.rds")
+```
+
+```{r}
+all_mice_RPCA_integrated_sin_CD8_doublet <- readRDS(file="C:/Users/d940401/Desktop/Analisis_Seurat/all_mice_RPCA_integrated-sin-CD8-doublet.rds") 
+```
+
+
+```{r}
+# Find markers and limit to those expressed in greater than 75% of target population
+# https://samuel-marsh.github.io/scCustomize/articles/Gene_Expression_Plotting.html
+all_markers <- FindAllMarkers(object = all_mice_RPCA_integrated_sin_CD8_doublet) %>%
+    Add_Pct_Diff() %>%
+    filter(pct_diff > 0.6)
+top_markers <- Extract_Top_Markers(marker_dataframe = all_markers, num_genes = 7, named_vector = FALSE,
+    make_unique = TRUE)
+
+Clustered_DotPlot(seurat_object = all_mice_RPCA_integrated_sin_CD8_doublet, features = top_markers,k = 7)
+```
+
+# calculamos puntuaciones del ciclo celular.
+
+Usamos un dataset de humano, ya que funciona bastante bien, solo que hay que traducir los nombres de los genes de humano a raton (de mayúscula a minúscula)
+https://www.r-bloggers.com/2016/10/converting-mouse-to-human-gene-names-with-biomart-package/
+Lo vamos a hacer con el enlace: https://satijalab.org/seurat/articles/cell_cycle_vignette.html#assign-cell-cycle-scores
+
+
+```{r}
+#esto a mano, te lo pasa a minuscula, funciona muy bien
+m.s.genes <- str_to_title(cc.genes.updated.2019$s.genes)
+m.g2m.genes <- str_to_title(cc.genes.updated.2019$g2m.genes)
+#https://github.com/satijalab/seurat/issues/4617
+m.s.genes
+m.g2m.genes
+```
+
+
+```{r}
+data_integrated_cellCyc <- CellCycleScoring(data_integrated, s.features = m.s.genes, g2m.features = m.g2m.genes, set.ident = FALSE)
+data_integrated_doublet_cellCyc <- CellCycleScoring(m.all.doblet, s.features = m.s.genes, g2m.features = m.g2m.genes, set.ident = FALSE)
+
+data_integrated_doublet_cellCyc_df <- as.data.frame(data_integrated_doublet_cellCyc@meta.data)
+# view cell cycle scores and phase assignments
+#we added three more genes to m.s.genes 
+head(data_integrated_cellCyc[[]])
+
+#saveRDS(data_integrated_cellCyc, file="all_mice_integrated_with_CC-sin-CD8.rds")
+# Hemos cambiado por all_mice_RPCA_integrated_sin-CD8
+```
+
+
+```{r}
+#saveRDS(data_integrated_doublet_cellCyc, file="all_mice_RPCA_integrated-sin-CD8-doublet.rds")
+#cargalo
+data_integrated_doublet_cellCyc <- readRDS("C:/Users/d940401/Desktop/Analisis_Seurat/all_mice_RPCA_integrated-sin-CD8-doublet.rds")
+```
+
+
+```{r}
+library(ggplot2)
+
+# Calculate the relative percentage of each phase in each cluster
+phase_percentages <- data_integrated_doublet_cellCyc_df %>%
+  group_by(seurat_clusters, Phase) %>%
+  summarise(count = n()) %>%
+  mutate(percentage = count / sum(count) * 100)
+
+# Create a bar plot
+ggplot(phase_percentages, aes(x = seurat_clusters, y = percentage, fill = Phase)) +
+  geom_bar(stat = "identity", position = "stack") +
+  labs(y = "Percentage", x = "Cluster", fill = "Phase") +
+  theme_minimal()
+```
+G1: principio de la interfase.
+S: síntesis
+G2M las que más se dividen.
+
+```{r}
+phase_percentages <- data_integrated_doublet_cellCyc_df %>%
+  group_by(seurat_clusters, Phase) %>%
+  summarise(count = n(), .groups = "drop") %>%
+  mutate(percentage = count / sum(count) * 100)
+
+# Print the table
+print(phase_percentages)
+```
+
+
+```{r}
+library(ggplot2)
+
+# Filter the data for doublets
+doublets <- data_integrated_doublet_cellCyc_df[data_integrated_doublet_cellCyc_df$DF.classifications_0.25_0.06_572 == "Doublet", ]
+
+# Calculate the count of each phase in each cluster for doublets
+doublet_phase_counts <- doublets %>%
+  group_by(seurat_clusters, Phase) %>%
+  summarise(count = n(), .groups = "drop")
+
+# Calculate the total count of cells in each cluster
+total_counts <- doublets %>%
+  group_by(seurat_clusters) %>%
+  summarise(total = n(), .groups = "drop")
+
+# Merge the count and total data frames
+doublet_phase_percentages <- merge(doublet_phase_counts, total_counts, by = "seurat_clusters")
+
+# Calculate the percentage of each phase relative to the total count in the cluster for the doublets
+doublet_phase_percentages$percentage <- doublet_phase_percentages$count / doublet_phase_percentages$total * 100
+
+# Create a bar plot for doublets
+ggplot(doublet_phase_percentages, aes(x = seurat_clusters, y = percentage, fill = Phase)) +
+  geom_bar(stat = "identity", position = "stack") +
+  labs(y = "Percentage", x = "Cluster", fill = "Phase") +
+  theme_minimal()
+```
+
+Se ve diferencia entre cluster 5 y 10 respecto al 6. En el 10 y 5 prácticamente todas se están dividiendo mientras que en el 6 y el 4 están más resting. El UMAP separa por ahí.
+Si lo miro dentro de los dobletes no hay mucha diferencia, su presencia parece que no está sesgando los datos.
+
+```{r}
+# Visualize the distribution of cell cycle markers across
+RidgePlot(data_integrated_doublet_cellCyc, features = c("Mcm5","Pola1","Mcm6","Top2a","Cks2","Cks1b"), ncol = 2)
+```
+
+
+```{r}
+PCA_cc <- RunPCA(data_integrated_doublet_cellCyc, features = c(m.s.genes, m.g2m.genes))
+
+DimPlot_scCustom(PCA_cc,reduction = "pca",group.by = "Phase",
+                 colors_use = DiscretePalette_scCustomize(num_colors = 6, palette = "polychrome", shuffle_pal = TRUE))
+
+DimPlot_scCustom(data_integrated_doublet_cellCyc,reduction = "umap",group.by = "Phase",
+                 colors_use = DiscretePalette_scCustomize(num_colors = 6, palette = "polychrome", shuffle_pal = TRUE))
+
+DimPlot_scCustom(data_integrated_doublet_cellCyc,reduction = "umap", group.by = "Phase", split.by = "seurat_clusters",
+                 colors_use = DiscretePalette_scCustomize(num_colors = 6, palette = "polychrome", shuffle_pal =TRUE))
+
+```
+
+https://github.com/satijalab/seurat/discussions/4567
+
+No parece que las fases aporten mucha información. No vamos a regress.out por el.
+
+```{r}
+DimPlot_scCustom(PCA_cc,reduction = "pca",group.by = "seurat_clusters",split.by = "Phase",
+                 colors_use = DiscretePalette_scCustomize(num_colors = 10, palette = "polychrome", shuffle_pal = TRUE))
+```
+
+# Análisis VDJ
+
+Esto de internet:
+
+https://github.com/satijalab/seurat/issues/1435
+rutas:
+
+```{r}
+#bcr_folder
+
+BCR_m.44 <- "C:/Users/d940401/Desktop/Analisis_Seurat/mouse_44/"
+BCR_m.45 <- "C:/Users/d940401/Desktop/Analisis_Seurat/mouse_45/"
+BCR_m.48 <- "C:/Users/d940401/Desktop/Analisis_Seurat/mouse_48_filtered_feature_bc_matrix/"
+BCR_m.49 <- "C:/Users/d940401/Desktop/Analisis_Seurat/mouse_49/"
+BCR_m.50 <- "C:/Users/d940401/Desktop/Analisis_Seurat/mouse_50/"
+BCR_m.52 <- "C:/Users/d940401/Desktop/Analisis_Seurat/mouse_52/"
+
+```
+
+Creamos copia sobre la que iremos añadiendo
+
+```{r}
+data_integrated_VDJ <- data_integrated_cellCyc
+```
+
+Esto no funciona, tiene que ser todo en una:
+
+```{r}
+# add_clonotype(BCR_m.44, data_integrated_VDJ, mouse_name="m.44")
+# add_clonotype(BCR_m.45, data_integrated_VDJ, mouse_name="m.45")
+# add_clonotype(BCR_m.48, data_integrated_VDJ, mouse_name="m.48") #
+# add_clonotype(BCR_m.49, data_integrated_VDJ, mouse_name="m.49") #
+# add_clonotype(BCR_m.50, data_integrated_VDJ, mouse_name="m.50")
+# add_clonotype(BCR_m.52, data_integrated_VDJ, mouse_name="m.52") #
+```
+
+Los de una muestra (44-45-50) van diferentes a los de la otra.
+La muestra 44,45 y 50 no llegan a frequency de 10, por lo que bajaremosel threshold a que haya mas de 3.
+
+Modificando la funcion:
+
+```{r}
+add_clonotype <- function(bcr_folders,seurat_obj,mouse_names) {
+  # Initialize an empty data frame to store all the data
+  all_data <- data.frame()
+
+  # Loop through each bcr_folder and read in the data
+  for (i in seq_along(bcr_folders)) {
+    bcr1 <- read.csv(paste(bcr_folders[i], "filtered_contig_annotations.csv", sep = ""))
+
+    # Remove the -1 at the end of each barcode.
+    # Subsets so only the first line of each barcode is kept,
+    # as each entry for given barcode will have same clonotype.
+    bcr1 <- bcr1[!duplicated(bcr1$barcode),]
+
+    # Only keep the barcode and clonotype columns.
+    # We'll get additional clonotype info from the clonotype table.
+    bcr1 <- bcr1[, c("barcode", "raw_clonotype_id", "chain", "v_gene", "d_gene", "j_gene", "c_gene")]
+    names(bcr1)[names(bcr1) == "raw_clonotype_id"] <- "clonotype_id"
+
+    # Add mouse name to clonotype IDs
+    bcr1$clonotype_id <- paste0(mouse_names[i], "_", bcr1$clonotype_id)
+
+    # Clonotype-centric info.
+    clono <- read.csv(paste(bcr_folders[i], "clonotypes.csv", sep = ""))
+
+    # Add mouse name to clonotype IDs in clono data frame
+    clono$clonotype_id <- paste0(mouse_names[i],"_", clono$clonotype_id)
+
+    # Slap the AA sequences onto our original table by clonotype_id.
+    bcr1 <- merge(bcr1, clono[, c("clonotype_id", "cdr3s_aa", "frequency", "proportion")])
+
+    # Remove clonotypes with a frequency below x
+    bcr1 <- bcr1[as.logical(ave(1:nrow(bcr1), bcr1$clonotype_id, FUN = function(x) length(x) > 3)),]
+
+    # Add mouse name to barcodes
+    bcr1$barcode <- paste0(mouse_names[i], "_", bcr1$barcode)
+
+    # Append the data to the all_data data frame
+    all_data <- rbind(all_data, bcr1)
+  }
+
+  # Reorder so barcodes are first column and set them as rownames.
+  all_data <- all_data[, c(2, 1, 3, 4, 5, 6, 7, 8, 9, 10)]
+  rownames(all_data) <- all_data[, 1]
+  all_data[, 1] <- NULL
+
+  # Add to the Seurat object's metadata.
+  seurat_obj <- AddMetaData(object = seurat_obj, metadata = all_data)
+
+  return(seurat_obj)
+}
+```
+
+
+```{r}
+data_integrated_VDJ <- add_clonotype(
+  bcr_folders = c(BCR_m.44, BCR_m.45, BCR_m.48, BCR_m.49, BCR_m.50, BCR_m.52),
+  seurat_obj = data_integrated_VDJ,
+  mouse_names = c("m.44", "m.45", "m.48", "m.49", "m.50", "m.52")
+)
+data_integrated_VDJ_df <- as.data.frame(data_integrated_VDJ@meta.data)
+```
+
+
+# Interpretacion de los clonotipos
+
+Los clonotipos los estudiaremos y procesaremos con la suite immcantation y luego uniremos el objeto seurat.
+
+
+```{r}
+par(mfrow=c(2, 2))
+RidgePlot(data_integrated_VDJ, features="nCount_RNA")
+RidgePlot(data_integrated_VDJ, features="nFeature_RNA")
+RidgePlot(data_integrated_VDJ, features="percent.mt")
+RidgePlot(data_integrated_VDJ, features="percent_ribo")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+

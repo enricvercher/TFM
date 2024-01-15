@@ -1,0 +1,704 @@
+---
+title: "scRepertoire"
+author: "Enric Vercher"
+date: "2023-11-02"
+output: html_document
+---
+
+```{r}
+suppressPackageStartupMessages({library(parallel)
+library(Seurat)
+library(ggplot2)
+library(dplyr)
+library(tidyverse)
+library(patchwork)
+library(DoubletFinder)
+library(sctransform)
+library(glmGamPoi)
+library(SeuratDisk)
+library(SeuratData)
+
+library(scales)
+library(scRepertoire)
+library(knitr)
+
+#para las paletas de colores personalizadas
+library(scCustomize)
+library(qs)
+})
+```
+
+
+Cargamos los datos:
+
+```{r}
+mouse_44.data <- read.csv("C:/Users/d940401/Desktop/Analisis_Sauron/mouse_44/filtered_contig_annotations.csv")
+mouse_45.data <- read.csv("C:/Users/d940401/Desktop/Analisis_Sauron/mouse_45/filtered_contig_annotations.csv")
+mouse_48.data <- read.csv("C:/Users/d940401/Desktop/Analisis_Sauron/mouse_48/filtered_contig_annotations.csv")
+mouse_49.data <- read.csv("C:/Users/d940401/Desktop/Analisis_Sauron/mouse_49/filtered_contig_annotations.csv")
+mouse_50.data <- read.csv("C:/Users/d940401/Desktop/Analisis_Sauron/mouse_50/filtered_contig_annotations.csv")
+mouse_52.data <- read.csv("C:/Users/d940401/Desktop/Analisis_Sauron/mouse_52/filtered_contig_annotations.csv")
+```
+
+
+
+```{r}
+# Assuming `mouse_44.data` is your data frame and you want to add the prefix to the first column
+mouse_44.data[, 1] <- paste0("m.44_", mouse_44.data[, 1])
+mouse_45.data[, 1] <- paste0("m.45_", mouse_45.data[, 1])
+mouse_48.data[, 1] <- paste0("m.48_", mouse_48.data[, 1])
+mouse_49.data[, 1] <- paste0("m.49_", mouse_49.data[, 1])
+mouse_50.data[, 1] <- paste0("m.50_", mouse_50.data[, 1])
+mouse_52.data[, 1] <- paste0("m.52_", mouse_52.data[, 1])
+```
+
+hay que quitar aqui los  que no tienen GEX del otro
+
+```{r}
+combined_data <- rbind(mouse_44.data, mouse_45.data, mouse_48.data, mouse_49.data, mouse_50.data, mouse_52.data)
+combined_data <- combined_data %>%
+  mutate(sample = case_when(
+    grepl("^m.44_", barcode) ~ "m.44",
+    grepl("^m.45_", barcode) ~ "m.45",
+    grepl("^m.48_", barcode) ~ "m.48",
+    grepl("^m.49_", barcode) ~ "m.49",
+    grepl("^m.50_", barcode) ~ "m.50",
+    grepl("^m.52_", barcode) ~ "m.52",
+    # Add more conditions here for other mice
+    TRUE ~ "other"  # This will be used for cell_id that don't match any of the above conditions
+  ))
+```
+
+A partir del archivo bcr_sin_transcriptoma que esta en "bind_seurat_VDJ_analysis.Rmd"
+
+```{r}
+combined_data_filtered <- combined_data[!(combined_data$barcode %in% bcr_sin_transcriptoma$cell_id), ]
+```
+
+Hemos quitado los LB de los que no hay GEX, pero aun puede quedar alguna que tenga más de dos cadenas pesadas.
+
+```{r}
+# Filtrar y guardar por sample
+mouse_44.data.filtered <- combined_data_filtered[combined_data_filtered$sample == "m.44", ]
+mouse_44.data.filtered$sample <- NULL
+mouse_44.data.filtered$barcode <- gsub("^m\\.44_", "", mouse_44.data.filtered$barcode)
+
+mouse_45.data.filtered <- combined_data_filtered[combined_data_filtered$sample == "m.45", ]
+mouse_45.data.filtered$sample <- NULL
+mouse_45.data.filtered$barcode <- gsub("^m\\.45_", "", mouse_45.data.filtered$barcode)
+
+mouse_48.data.filtered <- combined_data_filtered[combined_data_filtered$sample == "m.48", ]
+mouse_48.data.filtered$sample <- NULL
+mouse_48.data.filtered$barcode <- gsub("^m\\.48_", "", mouse_48.data.filtered$barcode)
+
+mouse_49.data.filtered <- combined_data_filtered[combined_data_filtered$sample == "m.49", ]
+mouse_49.data.filtered$sample <- NULL
+mouse_49.data.filtered$barcode <- gsub("^m\\.49_", "", mouse_49.data.filtered$barcode)
+
+mouse_50.data.filtered <- combined_data_filtered[combined_data_filtered$sample == "m.50", ]
+mouse_50.data.filtered$sample <- NULL
+mouse_50.data.filtered$barcode <- gsub("^m\\.50_", "", mouse_50.data.filtered$barcode)
+
+mouse_52.data.filtered <- combined_data_filtered[combined_data_filtered$sample == "m.52", ]
+mouse_52.data.filtered$sample <- NULL
+mouse_52.data.filtered$barcode <- gsub("^m\\.52_", "", mouse_52.data.filtered$barcode)
+
+rm(mouse_44.data)
+rm(mouse_45.data)
+rm(mouse_48.data)
+rm(mouse_49.data)
+rm(mouse_50.data)
+rm(mouse_52.data)
+```
+
+```{r}
+contig_list <- list(mouse_44.data.filtered,mouse_45.data.filtered,mouse_48.data.filtered,mouse_49.data.filtered,mouse_50.data.filtered,mouse_52.data.filtered)
+```
+
+```{r}
+head(contig_list[[1]])
+```
+
+No quitamos NA, porque se van las NA de solo pesada sin ligera y perdemos las pesadas.
+
+filterMulti --> FALSE para que elimine cualquier barcode con mas de 2 cadenas pesadas o ligeras ( por defecto), ya con removeMulti quitamos las que tienen mas de 2.
+
+```{r}
+combined <- combineBCR(contig_list, 
+                       samples = c("m.44", "m.45", "m.48", "m.49", "m.50","m.52"),
+                       removeNA=FALSE,removeMulti=TRUE)
+combined_44 <- as.data.frame(combined[[1]])
+combined_45 <- as.data.frame(combined[[2]])
+combined_48 <- as.data.frame(combined[[3]])
+combined_49 <- as.data.frame(combined[[4]])
+combined_50 <- as.data.frame(combined[[5]])
+combined_52 <- as.data.frame(combined[[6]])
+```
+
+```{r}
+# contig_list.sin.filt <- list(mouse_44.data,mouse_45.data,mouse_48.data,mouse_49.data,mouse_50.data,mouse_52.data)
+# combined_sin_filtrar <- combineBCR(contig_list.sin.filt, 
+#                        samples = c("m.44", "m.45", "m.48", "m.49", "m.50","m.52"),
+#                        removeNA=FALSE,removeMulti=TRUE)
+# combined_44_sin_fil <- as.data.frame(combined_sin_filtrar[[1]])
+```
+
+
+```{r}
+quant_result <- quantContig(combined, cloneCall="strict", scale = T, chain="IGH", exportTable = T)
+quant_result
+quantContig(combined, cloneCall="strict", scale = T, chain="IGH")
+```
+
+contigs: total number of unique clonotypes
+total: total count of clonotypes
+scaled: the %
+
+clonotipos totales:
+
+```{r}
+1307 + 1173 + 257 + 983 + 2422 + 1350
+```
+Hay más clones totales que los que obtenemos en immcantation.
+
+Si calculo los IGH que tiene el mouse_44. Esto lo haciamos cuando CombineBCR removeNA=False
+
+```{r}
+# Calcular el número de filas después de eliminar las filas con IGH = NA
+num_filas_sin_NA <- combined_52 %>% 
+  filter(!is.na(IGH)) %>%
+  nrow()
+
+print(num_filas_sin_NA)
+```
+Filas sin na en IGH:
+
+m.44 --> 1046
+m.45 --> 908
+m.48 --> 223
+m.49 --> 900
+m.50 --> 2226
+m.52 --> 1253
+
+```{r}
+1046 + 908 + 223 + 900 + 2226 + 1253
+```
+La suma seria 6556 para scRepertoire y la del immcantation es 6031 LB totales. Tendriamos clonotipos pero sin ligera.
+
+Sale muy parecido al Immcantation
+
+La diferencia radica:
+
+
+2) The strict definition of clonotype (CTstrict) is based on the V gene and >85% normalized Levenshtein distance of the nucleotide sequence. The Levenshtein distance is calculated across all BCR sequences recovered.
+
+Nosotros la asignación clonal la hacemos con la distancia de Hamming, que se hace sobre secuencias VDJ de la misma longitud.
+
+Le quitamos todos los que IGH = NA pero nos quedamos con las ligeras = NA
+
+```{r}
+# Para el ratón 44
+combined_44_no_NA <- combined_44 %>% filter(!is.na(IGH))
+
+# Para el ratón 45
+combined_45_no_NA <- combined_45 %>% filter(!is.na(IGH))
+
+# Para el ratón 48
+combined_48_no_NA <- combined_48 %>% filter(!is.na(IGH))
+
+# Para el ratón 49
+combined_49_no_NA <- combined_49 %>% filter(!is.na(IGH))
+
+# Para el ratón 50
+combined_50_no_NA <- combined_50 %>% filter(!is.na(IGH))
+
+# Para el ratón 52
+combined_52_no_NA <- combined_52 %>% filter(!is.na(IGH))
+
+combined_data_no_NA_df <- rbind(combined_44_no_NA,combined_45_no_NA,combined_48_no_NA,combined_49_no_NA,combined_50_no_NA,combined_52_no_NA)
+combined_data_no_NA <- list(m.44=combined_44_no_NA, m.45=combined_45_no_NA, m.48=combined_48_no_NA,m.49= combined_49_no_NA,m.50= combined_50_no_NA, m.52=combined_52_no_NA)
+```
+
+Saber el match entre el raton_44 del immcantation y el bcr_gex_data cuando solo tenemos los LB con scRNAseq
+
+```{r}
+library(dplyr)
+
+# Obtener el número total de filas en bcr_gex_data para mouse_44
+total_rows_bcr_gex_data4 <- nrow(bcr_gex_data)
+
+# Realizar la comparación y encontrar los matches entre las columnas "barcode" y "cell_id"
+matches <- sum(combined_data_no_NA_df$barcode %in% bcr_gex_data$cell_id )
+
+# Calcular el porcentaje de match
+percentage_match <- (matches / total_rows_bcr_gex_data4) * 100
+
+# Mostrar el resultado
+print(percentage_match)
+```
+```{r}
+table(combined_data_no_NA_df$barcode %in% bcr_gex_data$cell_id )
+# 1046 - 974
+```
+Las 525 extra que tenemos en el screpertoire son las que falta al análisis scRNAseq.
+
+```{r}
+extra_rows <- anti_join(combined_data_no_NA_df, bcr_gex_data, by = c("barcode" = "cell_id"))
+extra_rows
+```
+
+## Clonotype abundance
+
+```{r}
+abundanceContig(combined_data_no_NA, cloneCall = "aa", scale = F, group="CTstrict", chain="IGH")
+```
+
+# Length of clonotypes
+
+```{r}
+a <- lengthContig(combined_data_no_NA, cloneCall="aa", chain = "IGH", exportTable = T) 
+lengthContig(combined, cloneCall="aa", chain = "IGH") 
+```
+```{r}
+mean(a$length)
+median(a$length)
+```
+Sin los NA
+
+```{r}
+quant_result <- quantContig(combined_data_no_NA, cloneCall="strict", scale = T, chain="IGH", exportTable = T)
+quant_result
+quantContig(combined_data_no_NA, cloneCall="strict", scale = T, chain="IGH")
+```
+
+
+
+# Compare clonotypes
+
+Lo podemos usar cuando hayamos definido los clones bien.
+
+```{r}
+compareClonotypes(combined_data_no_NA,
+                  cloneCall = "aa",
+                  numbers = 10, 
+                  samples = c("m.44","m.45","m.48","m.49","m.52","m.50"), 
+                  graph = "alluvial",
+                  chain="IGH")
+```
+
+# Visualize Gene Usage
+
+```{r}
+vizGenes(combined_data_no_NA, gene = "V", 
+         chain = "IGH", 
+         plot = "bar", 
+         order = "variance", 
+         scale = TRUE)
+```
+
+# Clonal Space Homeostasis
+
+```{r}
+clonalHomeostasis(combined_data_no_NA, cloneCall = "aa", 
+                  cloneTypes = c(Rare = 1e-04, 
+                                 Small = 0.001, 
+                                 Medium = 0.01, 
+                                 Large = 0.1, 
+                                 Hyperexpanded = 1))
+```
+
+# Clonal proportion
+
+Esto del nuestro
+
+```{r}
+clonalHomeostasis(combined_data_no_NA, cloneCall = "strict")
+```
+
+
+```{r}
+clonalProportion(combined_data_no_NA, cloneCall = "strict",
+                 split = c(10, 100, 1000, 10000, 30000, 1e+05)) 
+```
+
+# Overlap analysis
+
+```{r}
+clonalOverlap(combined_data_no_NA, 
+              cloneCall = "strict", 
+              method = "morisita")
+clonal_overlap <- clonalOverlap(combined_data_no_NA, 
+              cloneCall = "strict", 
+              method = "morisita",
+              exportTable=TRUE)
+```
+
+```{r}
+clonalOverlap(combined_data_no_NA, 
+              cloneCall = "strict", 
+              method = "overlap")
+```
+
+Si lo hacemos a mano:
+
+```{r}
+library(ggplot2)
+library(reshape2)
+
+data <- matrix(c(NA, 0.7393783, 0.0008823172, 0.01195441, 0.225324897, 0.01620666,
+                 NA, NA, 0.0047156031, 0.01718992, 0.228307584, 0.01866366,
+                 NA, NA, NA, 0.05646745, 0.002036858, 0.03925808,
+                 NA, NA, NA, NA, 0.009256557, 0.04900645,
+                 NA, NA, NA, NA, NA, 0.01336442,
+                 NA, NA, NA, NA, NA, NA), ncol = 6, byrow = TRUE)
+
+# Nombres de las filas y columnas
+rownames(data) <- c("m.44", "m.45", "m.48", "m.49", "m.50", "m.52")
+colnames(data) <- c("m.44", "m.45", "m.48", "m.49", "m.50", "m.52")
+
+# Convertir la matriz en un marco de datos para ggplot
+data <- as.data.frame(data)
+data$mice <- rownames(data)
+
+# Convertir la tabla en formato largo para ggplot
+data_long <- melt(data, id.vars = "mice", variable.name = "names", value.name = "distance")
+data_long$distance <- as.numeric(data_long$distance)
+
+# # Cambia los NA a texto "NA" para que se visualicen como etiquetas en el gráfico
+# data_long$distance[is.na(data_long$distance)] <- "NA"
+# 
+# # Crea el gráfico
+# ggplot(data_long, aes(x = mice, y = names, fill = distance)) +
+#   geom_tile(color = "black") +
+#   geom_text(aes(label = ifelse(distance != "NA", round(as.numeric(distance), 2), "")), color = "black") +
+#   scale_fill_gradient(low = "white", high = "red", na.value = "white", name = "Morisita Distance") +
+#   labs(title = "Matriz de Distancia entre Ratones", x = "Ratón", y = "Ratón") +
+#   theme_minimal() +
+#   theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+
+```
+
+
+# Clonal size distribution
+
+```{r}
+clonesizeDistribution(combined_data_no_NA, 
+                      cloneCall = "strict", 
+                      method="ward.D2")
+```
+
+# Diversity analysis
+
+Aplicar a los clusters despues.
+
+```{r}
+clonalDiversity(combined_data_no_NA, 
+                cloneCall = "strict", 
+                n.boots = 100)
+```
+
+# Scatter compare
+
+```{r}
+scatterClonotype(combined_data_no_NA, 
+                 cloneCall ="gene", 
+                 x.axis = "m.44", 
+                 y.axis = "m.45",
+                 dot.size = "total",
+                 graph = "proportion")
+```
+
+# ELEGIMOS LOS ROWS QUE SE COMPARTEN CON EL CLUSTER 9 PROVENIENTES DEL ANÁLISIS SINGLE CELL.
+
+Este es el código, también presente en bind_seurat_VDJ_analysis.rmd:
+
+
+# Interaction between single cell objects
+
+```{r}
+seurat_RPCA <-readRDS(file="C:/Users/d940401/Desktop/Analisis_Seurat/all_mice_RPCA_integrated-sin-CD8-doublet.rds")
+DimPlot(seurat_RPCA, label = T) + NoLegend()
+```
+
+```{r}
+
+new.cluster.ids <-  c("C0-Naive/Naive activada", "C1-Plasmblasto","C2-memoria (no-IS)","C3-act +PreMem","C4-Memoria+plasmblasto","C5-Bmemoria-IS","C6-Bmemoria-IS","C7-Naive","C8-Plasmblasto-avanzado","C9-Plasmatica","C10-Breg(IS)")
+names(new.cluster.ids) <- levels(seurat_RPCA)
+seurat_RPCA <- RenameIdents(seurat_RPCA, new.cluster.ids)
+head(Idents(seurat_RPCA), 5)
+
+```
+
+```{r}
+table(Idents(seurat_RPCA))
+```
+
+```{r}
+seurat <- combineExpression(combined_data_no_NA, seurat_RPCA, 
+                  cloneCall="strict", 
+                  group.by = "sample",
+                  chain="IGH",
+                  proportion = FALSE, 
+                  cloneTypes=c(Single=1, Small=5, Medium=20, Large=100, Hyperexpanded=500))
+
+```
+
+```{r}
+colorblind_vector <- colorRampPalette(rev(c("#0D0887FF", "#47039FFF", 
+              "#7301A8FF", "#9C179EFF", "#BD3786FF", "#D8576BFF",
+              "#ED7953FF","#FA9E3BFF", "#FDC926FF", "#F0F921FF")))
+
+
+slot(seurat, "meta.data")$cloneType <- factor(slot(seurat, "meta.data")$cloneType, 
+                levels = c("Hyperexpanded (100 < X <= 500)", 
+                           "Large (20 < X <= 100)", 
+                            "Medium (5 < X <= 20)", 
+                            "Small (1 < X <= 5)", 
+                            "Single (0 < X <= 1)", NA))
+
+
+DimPlot(seurat, group.by = "cloneType") +
+    scale_color_manual(values = colorblind_vector(5), na.value="gray") + 
+  theme(plot.title = element_blank())
+```
+
+Representar aqui por ejemplo cada uno de los clonotipos por color
+
+```{r}
+# Extract UMAP data
+umap_data <- as.data.frame(seurat@reductions$umap@cell.embeddings)
+umap_data$cloneType <- seurat@meta.data$cloneType
+
+# Define the clone types and their colors
+clone_types <- c("Hyperexpanded (100 < X <= 500)", "Large (20 < X <= 100)", "Medium (5 < X <= 20)", "Small (1 < X <= 5)")
+clone_colors <- c("red", "green", "orange", "blue")
+
+# Create a UMAP plot for each clone type
+for(i in seq_along(clone_types)) {
+  clone_type <- clone_types[i]
+  
+  # Create the UMAP plot
+  plot <- ggplot(umap_data, aes(x = UMAP_1, y = UMAP_2)) +
+    geom_point(data = subset(umap_data, cloneType == clone_type), aes(color = cloneType), alpha = 0.6) +
+    scale_color_manual(values = clone_colors[i]) +
+    labs(title = clone_type, color = "Clone Type") +
+    theme(plot.title = element_blank())
+  
+  # Print the plot
+  print(plot)
+}
+```
+
+Diagrama de barras superpuestas en el que aparezca cada cluster y su distribucion anterior.
+
+seurat_meta_data <- as.data.frame(seurat@meta.data)
+
+```{r}
+# Calculate the proportions of each clone type per cluster
+# Filter out NA values and calculate the proportions of each clone type per cluster
+proportions <- seurat@meta.data %>%
+  filter(!is.na(cloneType)) %>%
+  group_by(seurat_clusters, cloneType) %>%
+  summarise(n = n()) %>%
+  mutate(proportion = n / sum(n))
+
+# Convert the cluster variable to a factor and specify the levels in the order you want
+proportions$seurat_clusters <- factor(proportions$seurat_clusters, levels = c("0", "2", "5", "7","9","10","3","1","4","6","8"))
+
+# Plot the proportions
+ggplot(proportions, aes(x = seurat_clusters, y = proportion, fill = cloneType)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = colorblind_vector(7), na.value="white") +
+  theme_minimal() +
+  labs(x = "Cluster", y = "Proportion", fill = "Clone Type") +
+  theme(plot.title = element_blank())
+```
+
+Si le queremos añadir los valores:
+
+```{r}
+# Calculate the proportions of each clone type per cluster
+# Filter out NA values and calculate the proportions of each clone type per cluster
+proportions <- seurat@meta.data %>%
+  filter(!is.na(cloneType)) %>%
+  group_by(seurat_clusters, cloneType) %>%
+  summarise(n = n()) %>%
+  mutate(proportion = n / sum(n))
+
+# Convert the cluster variable to a factor and specify the levels in the order you want
+proportions$seurat_clusters <- factor(proportions$seurat_clusters, levels = c("0", "2", "5", "7","9","10","3","1","4","6","8"))
+
+# Plot the proportions
+ggplot(proportions, aes(x = seurat_clusters, y = proportion, fill = cloneType)) +
+  geom_bar(stat = "identity") +
+  scale_fill_manual(values = colorblind_vector(7), na.value="white") +
+  geom_text(aes(label = n), position = position_stack(vjust = 0.5), color = "black") +
+  theme_minimal() +
+  labs(x = "Cluster", y = "Proportion", fill = "Clone Type") +
+  theme(plot.title = element_blank())
+```
+
+```{r}
+colnames(slot(seurat, "meta.data"))
+```
+
+
+```{r}
+clonalOverlay(seurat, 
+              reduction = "umap", 
+              freq.cutpoint = 10, 
+              bins = 10, 
+              facet = "orig.ident") + 
+                 guides(color = "none")
+```
+
+# Clonal Network
+
+This function shows the relative proportion of clones that come from the starting node, with the ending node indicated by the arrow.
+
+```{r}
+#ggraph needs to be loaded due to issues with ggplot
+library(ggraph)
+
+#No Identity filter
+clonalNetwork(seurat, 
+              reduction = "umap", 
+              identity = "ident",
+              filter.clones = NULL,
+              filter.identity = NULL,
+              cloneCall = "strict")
+```
+
+```{r}
+#Examining Cluster 0 only
+clonalNetwork(seurat, 
+              reduction = "umap", 
+              identity = "ident",
+              filter.identity = "0",
+              cloneCall = "aa")
+```
+
+# Highlight CLonotypes
+
+```{r}
+seurat <- highlightClonotypes(seurat, 
+              cloneCall= "aa", 
+              sequence = c("NA_CQQYSSYPRTF", 
+                           "NA_CLQSDNMPLTF"))
+DimPlot(seurat, group.by = "highlight") + 
+  theme(plot.title = element_blank())
+```
+
+# Occupied Repertoire
+
+Count of cells by cluster assigned into specific frequency ranges.
+
+This is already done.
+
+```{r}
+occupiedscRepertoire(seurat, x.axis = "ident", proportion = T, label=T)
+```
+
+This is already done previously.
+
+# Alluvial clonotipes
+
+```{r}
+alluvialClonotypes(seurat, cloneCall = "gene", 
+                   y.axes = c("orig.ident", "ident"), 
+                   color = "NA_IGKV6-23.IGKJ1.IGKC") + 
+    scale_fill_manual(values = c("grey", colorblind_vector(2)[2]))
+```
+
+```{r}
+alluvialClonotypes(seurat, cloneCall = "gene", 
+                   y.axes = c("orig.ident", "ident"), 
+                   color = "ident") 
+```
+
+# Get chord diagrams
+
+```{r}
+ suppressPackageStartupMessages(library(circlize))
+library(scales)
+circles <- getCirclize(seurat, 
+                       group.by = "ident")
+
+#Just assigning the normal colors to each cluster
+grid.cols <- scales::hue_pal()(length(unique(seurat@active.ident)))
+names(grid.cols) <- levels(seurat@active.ident)
+#Graphing the chord diagram
+circlize::chordDiagram(circles,
+                       self.link = 1, 
+                       grid.col = grid.cols)
+```
+
+# StratracDiversity
+
+No aplica a nuestros datos.
+
+
+# Clonotype Bias
+
+```{r}
+clonotypeBias(seurat, 
+              cloneCall = "aa", 
+              split.by = "orig.ident", 
+              group.by = "seurat_clusters",
+              n.boots = 20, 
+              min.expand =10)
+```
+
+# Working with clonotypes after clusteting
+
+```{r}
+combined2 <- expression2List(seurat, 
+                             split.by = "ident")
+```
+
+
+```{r}
+clonalDiversity(combined2, 
+                cloneCall = "aa",
+                chain="IGH")
+```
+
+```{r}
+clonalHomeostasis(combined2, 
+                  cloneCall = "strict")
+```
+
+```{r}
+clonalProportion(combined2, 
+                 cloneCall = "nt")
+```
+
+# Clonal Overlap
+
+```{r}
+clonalOverlap(combined2, 
+              cloneCall="strict", 
+              method="overlap")
+```
+
+EL 8, 4 y 6 son los que mas overlapp tienen con el resto. Porque se han expandido clones provenientes de otros clusters más diversos.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

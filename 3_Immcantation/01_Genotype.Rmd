@@ -1,0 +1,179 @@
+---
+title: "02_genotipe"
+author: "Enric Vercher"
+date: "2023-11-07"
+output: html_document
+---
+
+
+```{r}
+# load libraries
+suppressPackageStartupMessages(library(airr))
+suppressPackageStartupMessages(library(alakazam))
+suppressPackageStartupMessages(library(data.table))
+suppressPackageStartupMessages(library(dowser))
+suppressPackageStartupMessages(library(dplyr))
+suppressPackageStartupMessages(library(ggplot2))
+suppressPackageStartupMessages(library(scoper))
+suppressPackageStartupMessages(library(shazam))
+suppressPackageStartupMessages(library(tigger))
+```
+
+## Genotyping and discovery of novel V gene alleles with TIgGER
+
+
+```{r}
+m.44 <- airr::read_rearrangement('C:/Users/d940401/Desktop/Analisis_immcantation/Analisis_Enric/Datos_Enric/Datos_TFM/00_Datos_filtrados_slurm/01_Filtrado_heavy_chain/m44.filtered.tsv')
+m.45 <- airr::read_rearrangement('C:/Users/d940401/Desktop/Analisis_immcantation/Analisis_Enric/Datos_Enric/Datos_TFM/00_Datos_filtrados_slurm/01_Filtrado_heavy_chain/m45.filtered.tsv')
+m.48 <- airr::read_rearrangement('C:/Users/d940401/Desktop/Analisis_immcantation/Analisis_Enric/Datos_Enric/Datos_TFM/00_Datos_filtrados_slurm/01_Filtrado_heavy_chain/m48.filtered.tsv')
+m.49 <- airr::read_rearrangement('C:/Users/d940401/Desktop/Analisis_immcantation/Analisis_Enric/Datos_Enric/Datos_TFM/00_Datos_filtrados_slurm/01_Filtrado_heavy_chain/m49.filtered.tsv')
+m.50 <- airr::read_rearrangement('C:/Users/d940401/Desktop/Analisis_immcantation/Analisis_Enric/Datos_Enric/Datos_TFM/00_Datos_filtrados_slurm/01_Filtrado_heavy_chain/m50.filtered.tsv')
+m.52 <- airr::read_rearrangement('C:/Users/d940401/Desktop/Analisis_immcantation/Analisis_Enric/Datos_Enric/Datos_TFM/00_Datos_filtrados_slurm/01_Filtrado_heavy_chain/m52.filtered.tsv')
+```
+
+
+```{r}
+ighv <- readIgFasta(file.path("C:/Users/d940401/Desktop/Analisis_immcantation/Analisis_Enric/data_IMGT/germlines/imgt/mouse/vdj/imgt_mouse_IGHV.fasta"))
+ighv[2] # show the first germline
+```
+
+
+#### Identify potentially novel V gene alleles
+
+We can combine 6 mice for better identification
+
+```{r}
+# Add a prefix to the "cell_id" column for each mouse
+m.44$cell_id <- paste0("m.44_", m.44$cell_id)
+m.45$cell_id <- paste0("m.45_", m.45$cell_id)
+m.48$cell_id <- paste0("m.48_", m.48$cell_id)
+m.49$cell_id <- paste0("m.49_", m.49$cell_id)
+m.50$cell_id <- paste0("m.50_", m.50$cell_id)
+m.52$cell_id <- paste0("m.52_", m.52$cell_id)
+
+# Combine the data frames
+all_mice_genotypes_analysis <- rbind(m.44, m.45, m.48, m.49, m.50, m.52)
+#nrow(all_mice_VDJ_analysis)
+```
+
+```{r}
+nv44 <- findNovelAlleles(m.44, germline_db = ighv, nproc = 8,germline_min=100) # find novel alleles
+nv45 <- findNovelAlleles(m.45, germline_db = ighv, nproc = 8,germline_min=100)
+nv48 <- findNovelAlleles(m.48, germline_db = ighv, nproc = 8,germline_min=15)
+nv49 <- findNovelAlleles(m.49, germline_db = ighv, nproc = 8,germline_min=50)
+nv50 <- findNovelAlleles(m.50, germline_db = ighv, nproc = 8,germline_min=130)
+nv52 <- findNovelAlleles(m.52, germline_db = ighv, nproc = 8,germline_min=80)
+
+nvALL <- findNovelAlleles(all_mice_genotypes_analysis, germline_db = ighv, nproc = 8)
+```
+
+
+```{r}
+selectNovel(nv44) # show novel alleles
+selectNovel(nv45)
+selectNovel(nv48)
+selectNovel(nv49)
+selectNovel(nv50)
+selectNovel(nv52)
+```
+
+```{r}
+selectNovel(nvALL)
+```
+ 
+
+No novel alleles were found in your data. Quizás al tener solo 6732 células en total.
+ 
+### Genotyping, including novel V gene alleles
+ 
+```{r}
+gt44 <- inferGenotype(m.44, germline_db = ighv, novel = nv44)
+gt45 <- inferGenotype(m.45, germline_db = ighv, novel = nv45)
+gt48 <- inferGenotype(m.48, germline_db = ighv, novel = nv48)
+gt49 <- inferGenotype(m.49, germline_db = ighv, novel = nv49)
+gt50 <- inferGenotype(m.50, germline_db = ighv, novel = nv50)
+gt52 <- inferGenotype(m.52, germline_db = ighv, novel = nv52)
+
+# save genotype inf .fasta format to be used later with CreateGermlines.py
+
+gtseq44 <- genotypeFasta(gt44, ighv, nv44)
+gtseq45 <- genotypeFasta(gt45, ighv, nv45)
+gtseq48 <- genotypeFasta(gt48, ighv, nv48)
+gtseq49 <- genotypeFasta(gt49, ighv, nv49)
+gtseq50 <- genotypeFasta(gt50, ighv, nv50)
+gtseq52 <- genotypeFasta(gt52, ighv, nv52)
+
+writeFasta(gtseq44, file.path("C:/Users/d940401/Desktop/Analisis_immcantation/Analisis_Enric/Datos_Enric/Datos_TFM/00_Datos_filtrados_slurm/02_Genotipado/v44_genotype.fasta"))
+writeFasta(gtseq45, file.path("C:/Users/d940401/Desktop/Analisis_immcantation/Analisis_Enric/Datos_Enric/Datos_TFM/00_Datos_filtrados_slurm/02_Genotipado/v45_genotype.fasta"))
+writeFasta(gtseq48, file.path("C:/Users/d940401/Desktop/Analisis_immcantation/Analisis_Enric/Datos_Enric/Datos_TFM/00_Datos_filtrados_slurm/02_Genotipado/v48_genotype.fasta"))
+writeFasta(gtseq49, file.path("C:/Users/d940401/Desktop/Analisis_immcantation/Analisis_Enric/Datos_Enric/Datos_TFM/00_Datos_filtrados_slurm/02_Genotipado/v49_genotype.fasta"))
+writeFasta(gtseq50, file.path("C:/Users/d940401/Desktop/Analisis_immcantation/Analisis_Enric/Datos_Enric/Datos_TFM/00_Datos_filtrados_slurm/02_Genotipado/v50_genotype.fasta"))
+writeFasta(gtseq52, file.path("C:/Users/d940401/Desktop/Analisis_immcantation/Analisis_Enric/Datos_Enric/Datos_TFM/00_Datos_filtrados_slurm/02_Genotipado/v52_genotype.fasta"))
+
+gt44 %>% arrange(total) %>% slice(1:3) # show the first 3 rows
+```
+ 
+```{r}
+gtALL <- inferGenotype(all_mice_genotypes_analysis, germline_db = ighv, novel = nvALL)
+gtseqALL <- genotypeFasta(gtALL, ighv, nvALL)
+writeFasta(gtseqALL, file.path("C:/Users/d940401/Desktop/Analisis_immcantation/Analisis_Enric/Datos_Enric/Datos_TFM/00_Datos_filtrados_slurm/02_Genotipado/vALL_genotype.fasta"))
+```
+ 
+ 
+```{r}
+plotGenotype(gt44) # genotyping including novel V gene alleles
+plotGenotype(gt45)
+plotGenotype(gt48)
+plotGenotype(gt49)
+```
+
+### Reassign V gene allele annotations
+
+
+```{r}
+m.44 <- reassignAlleles(m.44, gtseq44)
+m.45 <- reassignAlleles(m.45, gtseq45)
+m.48 <- reassignAlleles(m.48, gtseq48)
+m.49 <- reassignAlleles(m.49, gtseq49)
+m.50 <- reassignAlleles(m.50, gtseq50)
+m.52 <- reassignAlleles(m.52, gtseq52)
+
+selected_columns_44 <- m.44[, c("v_call", "v_call_genotyped")]
+sum(selected_columns_44$v_call != selected_columns_44$v_call_genotyped)
+```
+
+```{r}
+all_mice_genotypes_analysis <- reassignAlleles(all_mice_genotypes_analysis, gtseqALL)
+```
+
+
+```{r}
+# show some of the corrected gene calls
+m.44 %>% filter(v_call != v_call_genotyped) %>% sample_n(3) %>% select(v_call, v_call_genotyped)
+different_genotypes <- m.44 %>% filter(v_call != v_call_genotyped) %>% select(v_call, v_call_genotyped)
+```
+
+```{r}
+write_rearrangement(m.44, file.path("C:/Users/d940401/Desktop/Analisis_immcantation/Analisis_Enric/Datos_Enric/Datos_TFM/00_Datos_filtrados_slurm/02_Genotipado/m.44_genotyped.tsv"))
+write_rearrangement(m.45, file.path("C:/Users/d940401/Desktop/Analisis_immcantation/Analisis_Enric/Datos_Enric/Datos_TFM/00_Datos_filtrados_slurm/02_Genotipado/m.45_genotyped.tsv"))
+write_rearrangement(m.48, file.path("C:/Users/d940401/Desktop/Analisis_immcantation/Analisis_Enric/Datos_Enric/Datos_TFM/00_Datos_filtrados_slurm/02_Genotipado/m.48_genotyped.tsv"))
+write_rearrangement(m.49, file.path("C:/Users/d940401/Desktop/Analisis_immcantation/Analisis_Enric/Datos_Enric/Datos_TFM/00_Datos_filtrados_slurm/02_Genotipado/m.49_genotyped.tsv"))
+write_rearrangement(m.50, file.path("C:/Users/d940401/Desktop/Analisis_immcantation/Analisis_Enric/Datos_Enric/Datos_TFM/00_Datos_filtrados_slurm/02_Genotipado/m.50_genotyped.tsv"))
+write_rearrangement(m.52, file.path("C:/Users/d940401/Desktop/Analisis_immcantation/Analisis_Enric/Datos_Enric/Datos_TFM/00_Datos_filtrados_slurm/02_Genotipado/m.52_genotyped.tsv"))
+```
+
+```{r}
+write_rearrangement(all_mice_genotypes_analysis, file.path("C:/Users/d940401/Desktop/Analisis_immcantation/Analisis_Enric/Datos_Enric/Datos_TFM/00_Datos_filtrados_slurm/02_Genotipado/all_mice_genotyped.tsv"))
+```
+
+
+
+
+
+
+
+
+
+
+
+
